@@ -47,13 +47,8 @@ app = FastAPI(title="医学考试系统 API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://yangsi-exam.vercel.app",
-        "https://yangsi-exam-system.vercel.app",
-        "http://localhost:5173",
-        "http://localhost:5174",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
