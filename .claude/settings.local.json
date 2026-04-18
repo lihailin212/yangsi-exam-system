@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(python -c \"import fastapi, uvicorn, sqlalchemy, jose, passlib, openpyxl; print\\('所有依赖正常'\\)\")",
+      "Bash(python -c \"import fastapi, uvicorn, sqlalchemy, jose, passlib, openpyxl; print\\('OK'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(curl -s -X POST http://localhost:8000/api/auth/login -H \"Content-Type: application/json\" -d \"{\\\\\"employee_id\\\\\":\\\\\"admin\\\\\",\\\\\"password\\\\\":\\\\\"admin123\\\\\"}\")",
+      "Bash(python -m uvicorn app.main:app --port 8000)",
+      "Bash(curl -s -X POST http://localhost:8000/api/auth/login -H \"Content-Type: application/json\" -d '{\"employee_id\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(curl -s http://localhost:8000/api/statistics -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImV4cCI6MTc3NTg3NjE0Nn0.afqaOsPbzR0cUSZTlXqvuO8JM-JTD8YBS2RRPNMCCV8')",
+      "Bash(curl -s 'http://localhost:8000/api/questions?limit=3' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImV4cCI6MTc3NTg3NjE0Nn0.afqaOsPbzR0cUSZTlXqvuO8JM-JTD8YBS2RRPNMCCV8')",
+      "Bash(curl -s 'http://localhost:8000/api/exams?limit=3' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImV4cCI6MTc3NTg3NjE0Nn0.afqaOsPbzR0cUSZTlXqvuO8JM-JTD8YBS2RRPNMCCV8')",
+      "Bash(curl -s 'http://localhost:8000/api/students?limit=3' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImV4cCI6MTc3NTg3NjE0Nn0.afqaOsPbzR0cUSZTlXqvuO8JM-JTD8YBS2RRPNMCCV8')",
+      "Bash(pkill -f \"uvicorn app.main\")",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(npm run:*)",
+      "Bash(npx vite:*)",
+      "Bash(pip list:*)",
+      "Bash(python -m uvicorn app.main:app --host 0.0.0.0 --port 8000)",
+      "Bash(curl -s http://localhost:8000/docs)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(curl -s http://localhost:5200)",
+      "Bash(node node_modules/.bin/vite --port 5200)",
+      "Bash(curl -s http://localhost:5200/)",
+      "Bash(node node_modules/vite/bin/vite.js --port 5200)",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__take_snapshot",
+      "mcp__chrome-devtools__fill_form",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__type_text",
+      "mcp__chrome-devtools__fill",
+      "mcp__chrome-devtools__evaluate_script",
+      "mcp__chrome-devtools__list_console_messages"
+    ]
+  }
+}
