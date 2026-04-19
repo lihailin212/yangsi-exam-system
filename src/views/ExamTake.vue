@@ -18,7 +18,7 @@
           <span class="q-score">{{ currentQ.score }}分</span>
         </div>
 
-        <div class="question-content" v-html="currentQ.content"></div>
+        <div class="question-content" v-html="currentQContent"></div>
 
         <!-- 单选题 -->
         <div class="options-area" v-if="currentQ.type === 'single'">
@@ -131,7 +131,10 @@ const typeTagMap = {
   judgment: { label: '判断', type: 'success' },
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://stellar-youth-production-1591.up.railway.app'
+
 const currentQ = computed(() => questions.value[currentIndex.value] || {})
+const currentQContent = computed(() => currentQ.value.content?.replace(/\/uploads\//g, `${API_BASE}/uploads/`) || '')
 
 const parsedOptions = computed(() => {
   try { return JSON.parse(currentQ.value.options || '{}') } catch { return {} }

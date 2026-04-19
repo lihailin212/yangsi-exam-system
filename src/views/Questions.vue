@@ -360,6 +360,15 @@ const stripHtml = (html) => {
   return text.length > 60 ? text.slice(0, 60) + '...' : text
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://stellar-youth-production-1591.up.railway.app'
+
+const fixImageUrls = (items) => {
+  items.forEach(item => {
+    if (item.content) item.content = item.content.replace(/\/uploads\//g, `${API_BASE}/uploads/`)
+  })
+  return items
+}
+
 const loadData = async () => {
   loading.value = true
   try {
@@ -370,7 +379,7 @@ const loadData = async () => {
       search: search.value,
       category: filterCategory.value,
     })
-    tableData.value = res.items
+    tableData.value = fixImageUrls(res.items)
     total.value = res.total
   } finally {
     loading.value = false
