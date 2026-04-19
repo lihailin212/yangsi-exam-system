@@ -8,5 +8,10 @@
     "numReplicas": 1,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
+  },
+  "disk": {
+    "name": "exam-db",
+    "mountPath": "/app",
+    "size": "1GB"
   }
 }
