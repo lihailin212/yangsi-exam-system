@@ -200,7 +200,7 @@ onMounted(async () => {
 
 .invite-header {
   text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
   animation: fadeIn 0.6s ease-out;
 }
 
@@ -233,7 +233,7 @@ onMounted(async () => {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
-  padding: 32px;
+  padding: 24px;
   margin-bottom: 20px;
   text-align: center;
   animation: slideUp 0.5s ease-out;
@@ -246,7 +246,7 @@ onMounted(async () => {
   border-radius: 20px;
   font-size: 12px;
   font-weight: 500;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .exam-status-badge.进行中 { background: rgba(64,158,255,0.2); color: #409EFF; }
@@ -255,19 +255,21 @@ onMounted(async () => {
 .exam-status-badge.可参加 { background: rgba(103,194,58,0.2); color: #67C23A; }
 
 .exam-title {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 600;
   color: #fff;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   line-height: 1.4;
+  word-break: break-word;
 }
 
 .exam-meta {
   display: flex;
   justify-content: center;
-  gap: 24px;
+  gap: 16px;
+  flex-wrap: wrap;
   color: rgba(255, 255, 255, 0.6);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .exam-meta span {
@@ -280,19 +282,19 @@ onMounted(async () => {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
-  padding: 32px;
+  padding: 24px;
   animation: slideUp 0.5s ease-out 0.1s backwards;
 }
 
 .login-title {
-  font-size: 16px;
+  font-size: 15px;
   color: rgba(255, 255, 255, 0.8);
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   text-align: center;
 }
 
 .login-card :deep(.el-form-item) {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .login-card :deep(.el-input__wrapper) {
@@ -317,7 +319,7 @@ onMounted(async () => {
 
 .login-btn {
   width: 100%;
-  height: 44px;
+  height: 48px;
   font-size: 15px;
   font-weight: 500;
   border: none;
@@ -341,7 +343,7 @@ onMounted(async () => {
   background: rgba(245, 108, 108, 0.1);
   border: 1px solid rgba(245, 108, 108, 0.3);
   border-radius: 16px;
-  padding: 48px 32px;
+  padding: 32px 24px;
   text-align: center;
   animation: slideUp 0.5s ease-out;
 }
@@ -354,13 +356,13 @@ onMounted(async () => {
 
 .error-card h2 {
   color: #fff;
-  font-size: 20px;
+  font-size: 18px;
   margin-bottom: 12px;
 }
 
 .error-card p {
   color: rgba(255, 255, 255, 0.5);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .loading-overlay {
@@ -381,5 +383,44 @@ onMounted(async () => {
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/* 移动端适配 */
+@media (max-width: 480px) {
+  .invite-container {
+    padding: 16px;
+  }
+
+  .brand-logo {
+    width: 48px;
+    height: 48px;
+  }
+
+  .brand-title {
+    font-size: 20px;
+  }
+
+  .exam-card {
+    padding: 20px;
+    border-radius: 12px;
+  }
+
+  .exam-title {
+    font-size: 18px;
+  }
+
+  .exam-meta {
+    gap: 12px;
+    font-size: 12px;
+  }
+
+  .login-card {
+    padding: 20px;
+    border-radius: 12px;
+  }
+
+  .login-btn {
+    height: 48px;
+  }
 }
 </style>

@@ -166,7 +166,7 @@ onMounted(async () => {
 .result-card {
   background: #fff;
   border-radius: 16px;
-  padding: 48px 40px;
+  padding: 40px 32px;
   width: 100%;
   max-width: 500px;
   text-align: center;
@@ -210,9 +210,9 @@ onMounted(async () => {
 }
 
 .info-label { color: #909399; }
-.info-val { color: #303133; font-weight: 500; }
+.info-val { color: #303133; font-weight: 500; word-break: break-all; }
 
-.result-actions { display: flex; justify-content: center; gap: 12px; }
+.result-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 
 .review-item {
   border-bottom: 1px solid #f0f2f5;
@@ -226,6 +226,7 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+  flex-wrap: wrap;
 }
 
 .review-index { font-size: 14px; color: #606266; font-weight: 500; }
@@ -239,7 +240,7 @@ onMounted(async () => {
 
 .review-content :deep(img) { max-width: 100%; }
 
-.review-answers { display: flex; gap: 24px; font-size: 14px; margin-bottom: 8px; }
+.review-answers { display: flex; gap: 16px; font-size: 14px; margin-bottom: 8px; flex-wrap: wrap; }
 .answer-label { color: #909399; }
 .correct { color: #67C23A; font-weight: 500; }
 .wrong { color: #F56C6C; font-weight: 500; }
@@ -260,8 +261,71 @@ onMounted(async () => {
   height: 50vh;
 }
 
+/* 移动端适配 */
 @media (max-width: 480px) {
-  .result-card { padding: 32px 24px; }
-  .score-val { font-size: 56px; }
+  .result-page {
+    padding: 16px;
+  }
+
+  .result-card {
+    padding: 32px 20px;
+    border-radius: 12px;
+  }
+
+  .result-icon {
+    font-size: 56px;
+    margin-bottom: 12px;
+  }
+
+  .result-title {
+    font-size: 18px;
+    margin-bottom: 20px;
+  }
+
+  .score-val {
+    font-size: 56px;
+  }
+
+  .score-unit {
+    font-size: 20px;
+  }
+
+  .score-detail {
+    font-size: 14px;
+  }
+
+  .info-item {
+    font-size: 13px;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .info-val {
+    text-align: left;
+  }
+
+  .result-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .result-actions .el-button {
+    width: 100%;
+  }
+}
+
+/* 更小屏幕 */
+@media (max-width: 360px) {
+  .result-card {
+    padding: 24px 16px;
+  }
+
+  .score-val {
+    font-size: 48px;
+  }
+
+  .result-icon {
+    font-size: 48px;
+  }
 }
 </style>

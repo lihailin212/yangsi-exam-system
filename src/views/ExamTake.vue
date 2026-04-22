@@ -5,7 +5,7 @@
       <div class="exam-title">{{ exam?.title }}</div>
       <div class="exam-timer" :class="{ warning: timeLeft < 300 }">
         <el-icon><Timer /></el-icon>
-        {{ formatTime(timeLeft) }}
+        <span class="timer-text">{{ formatTime(timeLeft) }}</span>
       </div>
     </div>
 
@@ -70,8 +70,8 @@
         </div>
       </div>
 
-      <!-- 题目导航 -->
-      <div class="question-nav">
+      <!-- 题目导航 - 桌面端右侧 -->
+      <div class="question-nav desktop-nav">
         <div class="nav-title">答题进度</div>
         <div class="nav-grid">
           <div
@@ -89,11 +89,42 @@
       </div>
     </div>
 
-    <!-- 底部导航 -->
+    <!-- 底部导航 - 移动端显示 -->
     <div class="exam-footer" v-if="questions.length">
-      <el-button @click="prevQ" :disabled="currentIndex === 0">上一题</el-button>
-      <el-button v-if="currentIndex < questions.length - 1" type="primary" @click="nextQ">下一题</el-button>
-      <el-button v-else type="success" @click="handleSubmit" :loading="submitting">提交答卷</el-button>
+      <div class="footer-progress">
+        <span class="progress-text">已答 {{ answeredCount }}/{{ questions.length }}</span>
+        <el-progress
+          :percentage="answeredPercent"
+          :stroke-width="6"
+          :show-text="false"
+          color="#67C23A"
+        />
+      </div>
+      <div class="footer-actions">
+        <el-button class="nav-btn" @click="prevQ" :disabled="currentIndex === 0">
+          <el-icon><ArrowLeft /></el-icon>
+          <span class="btn-text">上一题</span>
+        </el-button>
+        <el-button v-if="currentIndex < questions.length - 1" type="primary" class="nav-btn" @click="nextQ">
+          <span class="btn-text">下一题</span>
+          <el-icon><ArrowRight /></el-icon>
+        </el-button>
+        <el-button v-else type="success" class="nav-btn" @click="handleSubmit" :loading="submitting">
+          <span class="btn-text">提交答卷</span>
+        </el-button>
+      </div>
+      <!-- 移动端答题进度条 -->
+      <div class="mobile-nav">
+        <div class="mobile-nav-grid">
+          <div
+            v-for="(q, i) in questions"
+            :key="q.id"
+            class="mobile-nav-dot"
+            :class="{ answered: isAnswered(q), current: i === currentIndex }"
+            @click="currentIndex = i"
+          >{{ i + 1 }}</div>
+        </div>
+      </div>
     </div>
 
     <div v-if="!exam && !loading" class="loading-tip">
@@ -110,6 +141,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExam, submitExam } from '@/api/exams'
+import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -131,7 +163,7 @@ const typeTagMap = {
   judgment: { label: '判断', type: 'success' },
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://stellar-youth-production-1591.up.railway.app'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://yangsi-exam-system-production-6700.up.railway.app'
 
 const currentQ = computed(() => questions.value[currentIndex.value] || {})
 const currentQContent = computed(() => currentQ.value.content?.replace(/\/uploads\//g, `${API_BASE}/uploads/`) || '')
@@ -150,6 +182,15 @@ const isAnswered = (q) => {
   if (q.type === 'multiple') return (multipleAnswers.value[q.id] || []).length > 0
   return !!answers.value[q.id]
 }
+
+const answeredCount = computed(() => {
+  return questions.value.filter(q => isAnswered(q)).length
+})
+
+const answeredPercent = computed(() => {
+  if (questions.value.length === 0) return 0
+  return Math.round((answeredCount.value / questions.value.length) * 100)
+})
 
 const selectAnswer = (key) => {
   answers.value[currentQ.value.id] = key
@@ -237,6 +278,10 @@ onUnmounted(() => clearInterval(timer))
 .exam-title {
   font-size: 16px;
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
 }
 
 .exam-timer {
@@ -274,6 +319,7 @@ onUnmounted(() => clearInterval(timer))
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 
 .q-index { font-size: 14px; color: #606266; }
@@ -284,44 +330,49 @@ onUnmounted(() => clearInterval(timer))
   line-height: 1.8;
   margin-bottom: 24px;
   color: #303133;
+  word-wrap: break-word;
 }
 
 .question-content :deep(img) { max-width: 100%; border-radius: 4px; }
+.question-content :deep(p) { margin: 0 0 12px; }
+.question-content :deep(p:last-child) { margin-bottom: 0; }
 
-.options-area { display: flex; flex-direction: column; gap: 10px; }
+.options-area { display: flex; flex-direction: column; gap: 12px; }
 
 .option-item {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: 14px;
+  padding: 16px;
   border: 2px solid #e4e7ed;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s;
+  min-height: 48px;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .option-item:hover { border-color: #409EFF; background: #f0f7ff; }
 .option-item.selected { border-color: #409EFF; background: #ecf5ff; }
 
 .option-key {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: #e4e7ed;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: bold;
   flex-shrink: 0;
 }
 
 .option-item.selected .option-key { background: #409EFF; color: #fff; }
-.option-val { font-size: 15px; line-height: 1.6; }
+.option-val { font-size: 15px; line-height: 1.6; word-break: break-word; }
 .tip { font-size: 12px; color: #909399; margin-top: 4px; }
 
-.question-nav {
+.question-nav.desktop-nav {
   width: 200px;
   background: #fff;
   border-radius: 8px;
@@ -377,14 +428,72 @@ onUnmounted(() => clearInterval(timer))
 
 .exam-footer {
   background: #fff;
-  padding: 12px 20px;
-  display: flex;
-  justify-content: center;
-  gap: 16px;
+  padding: 16px 20px;
   box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
   position: sticky;
   bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
+
+.footer-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-text {
+  font-size: 13px;
+  color: #606266;
+}
+
+.footer-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.nav-btn {
+  flex: 1;
+  max-width: 160px;
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-btn .el-icon {
+  margin: 0 4px;
+}
+
+.mobile-nav {
+  display: none;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}
+
+.mobile-nav-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.mobile-nav-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #f0f2f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-nav-dot.answered { background: #409EFF; color: #fff; }
+.mobile-nav-dot.current { outline: 2px solid #409EFF; }
 
 .loading-tip {
   flex: 1;
@@ -395,11 +504,118 @@ onUnmounted(() => clearInterval(timer))
   color: #909399;
 }
 
+/* 移动端适配 */
 @media (max-width: 768px) {
-  .exam-body { flex-direction: column; padding: 12px; }
-  .question-nav { width: 100%; position: static; }
-  .nav-grid { grid-template-columns: repeat(8, 1fr); }
-  .question-area { padding: 16px; }
-  .question-content { font-size: 15px; }
+  .exam-header {
+    padding: 12px 16px;
+  }
+
+  .exam-title {
+    font-size: 14px;
+    max-width: 50%;
+  }
+
+  .timer-text {
+    display: inline;
+  }
+
+  .exam-timer {
+    font-size: 16px;
+  }
+
+  .exam-body {
+    flex-direction: column;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .desktop-nav {
+    display: none;
+  }
+
+  .question-area {
+    padding: 16px;
+    border-radius: 8px;
+  }
+
+  .question-content {
+    font-size: 15px;
+  }
+
+  .question-header {
+    gap: 8px;
+  }
+
+  .q-index {
+    font-size: 13px;
+  }
+
+  .option-item {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .option-key {
+    width: 28px;
+    height: 28px;
+    font-size: 13px;
+  }
+
+  .option-val {
+    font-size: 14px;
+  }
+
+  .exam-footer {
+    padding: 12px 16px;
+    gap: 10px;
+  }
+
+  .footer-actions {
+    gap: 10px;
+  }
+
+  .nav-btn {
+    max-width: none;
+    min-height: 46px;
+    font-size: 14px;
+  }
+
+  .btn-text {
+    display: inline;
+  }
+
+  .mobile-nav {
+    display: block;
+  }
+
+  .mobile-nav-grid {
+    gap: 8px;
+  }
+
+  .mobile-nav-dot {
+    width: 36px;
+    height: 36px;
+    font-size: 13px;
+  }
+}
+
+/* 更小屏幕 */
+@media (max-width: 480px) {
+  .exam-title {
+    max-width: 40%;
+    font-size: 13px;
+  }
+
+  .exam-timer {
+    font-size: 14px;
+  }
+
+  .question-area {
+    padding: 12px;
+  }
+
+  .option-item {
+    padding: 12px;
+  }
 }
 </style>
