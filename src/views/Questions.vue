@@ -360,7 +360,7 @@ const stripHtml = (html) => {
   return text.length > 60 ? text.slice(0, 60) + '...' : text
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://stellar-youth-production-1591.up.railway.app'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://yangsi-exam-system-production-6700.up.railway.app'
 
 const fixImageUrls = (items) => {
   items.forEach(item => {

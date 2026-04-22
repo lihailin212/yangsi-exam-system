@@ -633,41 +633,101 @@ watch(activeTab, handleTabChange)
   .login-container {
     flex-direction: column;
   }
-  
+
   .login-branding {
     padding: var(--space-6);
+    min-height: auto;
+    padding: 40px 20px;
   }
-  
+
   .brand-content {
     text-align: center;
   }
-  
+
   .brand-features {
     align-items: center;
   }
-  
+
   .brand-title {
     font-size: 36px;
   }
-  
+
   .login-form-wrapper {
     width: 100%;
     padding: var(--space-6);
+    min-height: auto;
+    padding: 32px 20px 40px;
   }
 }
 
 @media (max-width: 480px) {
   .login-card {
-    padding: var(--space-6);
+    padding: 24px 20px;
+    border-radius: 12px;
   }
-  
+
+  .login-header h2 {
+    font-size: 22px;
+  }
+
   .brand-logo {
-    width: 60px;
-    height: 60px;
+    width: 56px;
+    height: 56px;
   }
-  
+
   .brand-title {
-    font-size: 28px;
+    font-size: 24px;
+    letter-spacing: 2px;
+  }
+
+  .brand-subtitle {
+    font-size: 14px;
+    margin-bottom: 32px;
+  }
+
+  .brand-features {
+    display: none;
+  }
+
+  .login-form-wrapper {
+    padding: 24px 16px 32px;
+  }
+
+  .login-btn {
+    height: 48px;
+    font-size: 15px;
+  }
+
+  .login-tabs :deep(.el-tabs__item) {
+    font-size: 14px;
+    padding: 0 16px;
+  }
+
+  .qrcode-tip {
+    font-size: 13px;
+  }
+
+  .qrcode-url {
+    font-size: 11px;
+    max-width: 240px;
+  }
+
+  .login-footer {
+    margin-top: 24px;
+  }
+}
+
+@media (max-width: 360px) {
+  .login-card {
+    padding: 20px 16px;
+  }
+
+  .brand-title {
+    font-size: 20px;
+  }
+
+  .login-header h2 {
+    font-size: 20px;
   }
 }
 </style>
