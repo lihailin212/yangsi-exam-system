@@ -37,7 +37,7 @@
           <el-cascader
             v-model="filterCategory"
             :options="categoryOptions"
-            :props="{ checkStrictly: true, emitPath: false, label: 'label', value: 'value' }"
+            :props="{ checkStrictly: true, checkOnClickNode: true, emitPath: false, label: 'label', value: 'value' }"
             placeholder="分类"
             clearable
             @change="loadData"
@@ -83,7 +83,7 @@
         </el-table-column>
         <el-table-column label="题目内容" min-width="200">
           <template #default="{ row }">
-            <span v-html="row.content" class="content-preview"></span>
+            <span v-html="row.content" class="content-preview" @click="onPreviewClick"></span>
           </template>
         </el-table-column>
         <el-table-column prop="category" label="分类" width="100" />
@@ -106,6 +106,9 @@
       />
     </el-card>
 
+    <!-- 图片预览（可缩放） -->
+    <ImagePreview v-model="previewVisible" :src="previewSrc" :title="previewTitle" />
+
     <!-- 添加/编辑弹窗 -->
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑题目' : '添加题目'" width="700px" :close-on-click-modal="false">
       <el-form :model="form" :rules="formRules" ref="formRef" label-width="80px">
@@ -120,7 +123,7 @@
         <el-form-item label="题目内容" prop="content">
           <div class="editor-wrapper">
             <div ref="editorToolbar" style="border-bottom:1px solid #ccc"></div>
-            <div ref="editorContent" style="height:160px;overflow-y:auto"></div>
+            <div ref="editorContent" style="height:240px;overflow-y:auto"></div>
           </div>
         </el-form-item>
 
@@ -128,7 +131,7 @@
           <el-cascader
             v-model="form.category"
             :options="categoryOptions"
-            :props="{ checkStrictly: true, emitPath: false, label: 'label', value: 'value' }"
+            :props="{ checkStrictly: true, checkOnClickNode: true, emitPath: false, label: 'label', value: 'value' }"
             placeholder="请选择分类"
             clearable
             filterable
@@ -276,6 +279,8 @@ const dialogVisible = ref(false)
 const importDialogVisible = ref(false)
 const editingId = ref(null)
 const formRef = ref(null)
+import ImagePreview from '@/components/ImagePreview.vue'
+
 const uploadRef = ref(null)
 const importFile = ref(null)
 const editorToolbar = ref(null)
@@ -360,11 +365,22 @@ const stripHtml = (html) => {
   return text.length > 60 ? text.slice(0, 60) + '...' : text
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://yangsi-exam-system-production-6700.up.railway.app'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 const fixImageUrls = (items) => {
   items.forEach(item => {
-    if (item.content) item.content = item.content.replace(/\/uploads\//g, `${API_BASE}/uploads/`)
+    if (item.content) {
+      // 将所有 /uploads 开头的图片路径替换为完整的后端URL
+      item.content = item.content.replace(/src=["'](\/uploads\/[^"']+)["']/g, (match, url) => {
+        // 如果URL已经是以 http 开头的完整URL，不做处理
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+          return match
+        }
+        // 否则拼接API基础URL（移除 /api 后缀）
+        const baseUrl = API_BASE.replace(/\/api$/, '')
+        return `src="${baseUrl}${url}"`
+      })
+    }
   })
   return items
 }
@@ -386,6 +402,113 @@ const loadData = async () => {
   }
 }
 
+/*
+ * 题干 HTML 规范化。
+ *
+ * 题库里 500 多道带图题的题干都是这种结构：
+ *     <p>请选择下图所示细胞名称：</p><img src="..." alt="image" />
+ * 图片是"裸"的顶层元素，不在任何块级标签里。
+ *
+ * wangEditor 底层是 Slate，Slate 的根节点只接受块级元素，
+ * 顶层裸 <img> 会被直接丢掉 —— 表现就是"打开编辑弹窗，图片没了"，
+ * 而 onChange 里 editor.getHtml() 再把丢过图片的内容写回数据库，
+ * 一存就把图片彻底删掉了。
+ *
+ * 这里把顶层非块级元素包进 <p>，和正常能显示的图片结构保持一致。
+ */
+const BLOCK_TAGS = new Set([
+  'P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI',
+  'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'BLOCKQUOTE', 'PRE',
+  'HR', 'SECTION', 'ARTICLE', 'FIGURE', 'FIGCAPTION'
+])
+
+const normalizeEditorHtml = (html) => {
+  if (!html) return html
+  const box = document.createElement('div')
+  box.innerHTML = html
+  let changed = false
+  for (const node of Array.from(box.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      if (!BLOCK_TAGS.has(node.tagName)) {
+        const p = document.createElement('p')
+        box.insertBefore(p, node)
+        p.appendChild(node)
+        changed = true
+      }
+    } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+      const p = document.createElement('p')
+      p.textContent = node.textContent
+      box.replaceChild(p, node)
+      changed = true
+    }
+  }
+  return changed ? box.innerHTML : html
+}
+
+const countImages = (html) => (html.match(/<img\b/gi) || []).length
+
+// 兜底：保存前发现图片少了，把原内容里的图片补回去，绝不让保存把图片删掉
+const restoreLostImages = (originalHtml, currentHtml) => {
+  if (!originalHtml || countImages(currentHtml) >= countImages(originalHtml)) return currentHtml
+  const srcSet = (html) => {
+    const box = document.createElement('div')
+    box.innerHTML = html || ''
+    return new Set(Array.from(box.querySelectorAll('img')).map(i => i.getAttribute('src')).filter(Boolean))
+  }
+  const currentSrcs = srcSet(currentHtml)
+  const box = document.createElement('div')
+  box.innerHTML = originalHtml
+  const lost = Array.from(box.querySelectorAll('img')).filter(i => {
+    const src = i.getAttribute('src')
+    return src && !currentSrcs.has(src)
+  })
+  if (!lost.length) return currentHtml
+  const out = document.createElement('div')
+  out.innerHTML = currentHtml
+  lost.forEach(img => {
+    const p = document.createElement('p')
+    p.appendChild(img.cloneNode(true))
+    out.appendChild(p)
+  })
+  return out.innerHTML
+}
+
+// 编辑器里的图片点击看大图。
+// 每次打开弹窗都会重建编辑器，所以要先把上一次的监听摘掉，避免重复绑定。
+let editorClickTarget = null
+let editorClickHandler = null
+const bindEditorImageClick = () => {
+  const el = editorContent.value
+  if (editorClickTarget && editorClickHandler) {
+    editorClickTarget.removeEventListener('click', editorClickHandler)
+  }
+  editorClickTarget = el
+  if (!el) return
+  editorClickHandler = (e) => {
+    const img = e.target.closest?.('img')
+    if (img) openPreview(img.src, '题目图片')
+  }
+  el.addEventListener('click', editorClickHandler)
+}
+
+// ---- 图片预览（题库里的图有时很大，列表里只有缩略图，看不清全貌）----
+const previewVisible = ref(false)
+const previewSrc = ref('')
+const previewTitle = ref('')
+
+const openPreview = (src, title = '') => {
+  if (!src) return
+  previewSrc.value = src
+  previewTitle.value = title
+  previewVisible.value = true
+}
+
+// 列表里的缩略图：点一下看大图
+const onPreviewClick = (e) => {
+  const img = e.target.closest?.('img')
+  if (img) openPreview(img.src, '题目图片')
+}
+
 const initEditor = async () => {
   try {
     const { createEditor, createToolbar } = await import('@wangeditor/editor')
@@ -395,7 +518,8 @@ const initEditor = async () => {
     }
     editorInstance = createEditor({
       selector: editorContent.value,
-      html: form.content,
+      // 顶层裸 <img> 会被 wangEditor 丢掉，先包成 <p> 再交给编辑器
+      html: normalizeEditorHtml(form.content),
       config: {
         onChange(editor) {
           form.content = editor.getHtml()
@@ -463,8 +587,8 @@ const initEditor = async () => {
       selector: editorToolbar.value,
       config: { 
         toolbarKeys: [
-          'bold', 'italic', 'underline', '|', 
-          'uploadImage', 'insertImage', '|', 
+          'bold', 'italic', 'underline', '|',
+          'uploadImage', 'insertImage', 'editImage', '|',
           'undo', 'redo'
         ],
         insertImage: {
@@ -478,6 +602,8 @@ const initEditor = async () => {
       mode: 'simple',
     })
     // 图片大小调节由 wangEditor 内置的 hover 工具栏提供
+    // 编辑器里的图片点一下可以看大图
+    bindEditorImageClick()
   } catch {
     // wangeditor 未安装时降级为 textarea
   }
@@ -485,9 +611,15 @@ const initEditor = async () => {
 
 const openAdd = async () => {
   editingId.value = null
+  originalContent.value = ''
   form.type = 'single'
   form.content = ''
-  form.options = defaultOptions()
+  // 重置选项，保持响应式
+  Object.keys(form.options).forEach(key => delete form.options[key])
+  form.options['A'] = ''
+  form.options['B'] = ''
+  form.options['C'] = ''
+  form.options['D'] = ''
   form.answer = ''
   form.analysis = ''
   form.category = ''
@@ -498,27 +630,47 @@ const openAdd = async () => {
   initEditor()
 }
 
+// 打开编辑时的原始题干，保存时用来兜底比对，防止图片被悄悄删掉
+const originalContent = ref('')
+
 const openEdit = async (row) => {
   editingId.value = row.id
+  originalContent.value = row.content || ''
   form.type = row.type
   form.content = row.content
-  try { form.options = JSON.parse(row.options) } catch { form.options = defaultOptions() }
+  // 原地修改 options，保持响应式绑定
+  try {
+    const newOptions = JSON.parse(row.options)
+    // 清空现有选项
+    Object.keys(form.options).forEach(key => delete form.options[key])
+    // 复制新选项
+    Object.keys(newOptions).forEach(key => form.options[key] = newOptions[key])
+  } catch {
+    Object.keys(form.options).forEach(key => delete form.options[key])
+    form.options['A'] = ''
+    form.options['B'] = ''
+    form.options['C'] = ''
+    form.options['D'] = ''
+  }
   form.answer = row.answer
-  form.analysis = row.analysis
+  form.analysis = row.analysis || ''
   form.category = row.category || ''
   multipleAnswer.value = row.type === 'multiple' ? row.answer.split(',') : []
   loadCategories()
   dialogVisible.value = true
   await nextTick()
   initEditor()
-  if (editorInstance) editorInstance.setHtml(form.content)
 }
 
 const onTypeChange = () => {
   form.answer = ''
   multipleAnswer.value = []
   if (form.type !== 'judgment') {
-    form.options = defaultOptions()
+    Object.keys(form.options).forEach(key => delete form.options[key])
+    form.options['A'] = ''
+    form.options['B'] = ''
+    form.options['C'] = ''
+    form.options['D'] = ''
   }
 }
 
@@ -533,6 +685,8 @@ const removeOption = (key) => {
 }
 
 const handleSave = async () => {
+  console.log('handleSave called, editingId:', editingId.value)
+  console.log('form.options before processing:', form.options)
   // 先处理多选题答案，再进行表单验证
   if (form.type === 'multiple') {
     if (multipleAnswer.value.length < 2) {
@@ -541,30 +695,68 @@ const handleSave = async () => {
     }
     form.answer = multipleAnswer.value.sort().join(',')
   }
-  await formRef.value.validate()
+  try {
+    await formRef.value.validate()
+    console.log('form validation passed')
+  } catch (e) {
+    console.log('form validation failed:', e)
+    return
+  }
   if (!form.content || form.content === '<p><br></p>') {
     ElMessage.warning('请输入题目内容')
     return
   }
+  // 兜底：编辑器万一把图片丢了，先问一句，绝不让"点一下保存"把图片悄悄删掉
+  if (countImages(form.content) < countImages(originalContent.value)) {
+    const origCount = countImages(originalContent.value)
+    const nowCount = countImages(form.content)
+    try {
+      await ElMessageBox.confirm(
+        `题干里的图片比原来少了（原来 ${origCount} 张，现在 ${nowCount} 张）。\n` +
+        `通常是编辑器没能保留图片。是否把原图补回？\n（选"取消"则按当前内容保存，等于主动删除图片）`,
+        '图片将被删除',
+        { type: 'warning', confirmButtonText: '补回图片', cancelButtonText: '取消（删除图片）' }
+      )
+      form.content = restoreLostImages(originalContent.value, form.content)
+    } catch {
+      // 用户选择"取消"：按当前内容保存
+    }
+  }
   saving.value = true
   try {
-      const payload = {
+    // 深拷贝选项，确保最新值
+    const currentOptions = {}
+    for (const key in form.options) {
+      currentOptions[key] = form.options[key]
+    }
+    console.log('currentOptions:', currentOptions)
+    const optionsStr = JSON.stringify(currentOptions)
+    console.log('optionsStr:', optionsStr)
+    const payload = {
       type: form.type,
       content: form.content,
-      options: JSON.stringify(form.options),
+      options: optionsStr,
       answer: form.answer,
-      analysis: form.analysis,
-      category: form.category,
+      analysis: form.analysis || '',
+      category: form.category || '',
     }
+    console.log('payload:', payload)
     if (editingId.value) {
-      await updateQuestion(editingId.value, payload)
+      console.log('Updating question:', editingId.value)
+      const result = await updateQuestion(editingId.value, payload)
+      console.log('Update result:', result)
       ElMessage.success('修改成功')
     } else {
-      await createQuestion(payload)
+      console.log('Creating new question')
+      const result = await createQuestion(payload)
+      console.log('Create result:', result)
       ElMessage.success('添加成功')
     }
     dialogVisible.value = false
     loadData()
+  } catch (err) {
+    console.error('Save error:', err)
+    ElMessage.error('保存失败: ' + (err.message || err))
   } finally {
     saving.value = false
   }
@@ -749,6 +941,16 @@ onMounted(() => {
 .content-preview :deep(img) { max-width: 120px; max-height: 80px; vertical-align: middle; }
 .content-preview :deep(p) { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .editor-wrapper { border: 1px solid #dcdfe6; border-radius: 4px; width: 100%; }
+/*
+ * 编辑器里的图片按容器宽度自适应。
+ * 之前图片按原始尺寸渲染，编辑器区域只有 160px 高，
+ * 大图只露出一条边，看起来就像"图片没了"。
+ */
+.editor-wrapper :deep(img) {
+  max-width: 100%;
+  height: auto;
+  cursor: zoom-in;
+}
 .options-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .option-item { display: flex; align-items: center; gap: 8px; }
 .option-key {

@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
 from ..database import get_db
-from .. import crud, schemas
+from .. import crud, schemas, models
+from ..timeutil import app_now, epoch_seconds
 from ..auth import get_current_user, require_admin, create_access_token
 from ..config import FRONTEND_BASE_URL
 
@@ -19,6 +20,7 @@ exam_student_router = APIRouter(prefix="/api/distributions/exam-students", tags=
 def get_frontend_url(exam_id: int, request: Request):
     """获取考试登录页的完整 URL（用于生成分发链接/二维码）"""
     base = _get_frontend_base_url(request)
+    # 前端使用 hash 路由，链接需带 #/
     return {"url": f"{base}/#/exam-login/{exam_id}"}
 
 
@@ -26,15 +28,15 @@ def _get_frontend_base_url(request: Request) -> str:
     """获取前端访问地址，优先使用配置，其次使用请求头推断"""
     # 配置值优先级最高
     configured = FRONTEND_BASE_URL
-    if configured and configured != "http://localhost:5173":
+    if configured and configured not in ("http://localhost:5173", "http://localhost:8000"):
         return configured
-    # 开发环境回退：从请求头推断
+    # 生产环境：从请求头推断
     forwarded = request.headers.get("x-forwarded-host", "")
     if forwarded:
         origin = request.headers.get("origin", "")
         if origin:
             return origin
-        return f"http://{forwarded}" if not forwarded.startswith("http") else forwarded
+        return f"https://{forwarded}" if not forwarded.startswith("http") else forwarded
     origin = request.headers.get("origin", "")
     if origin:
         return origin
@@ -57,7 +59,7 @@ def list_distributions(exam_id: int, request: Request, db: Session = Depends(get
             "employee_id": d.user.employee_id if d.user else "",
             "invite_code": d.invite_code,
             "created_at": d.created_at,
-            "invite_url": f"{base}#/invite/{d.invite_code}",
+            "invite_url": f"{base}/#/invite/{d.invite_code}",
         })
     return result
 
@@ -80,7 +82,7 @@ def create_distributions(d_in: schemas.DistributionCreate, request: Request, db:
             "employee_id": d.user.employee_id if d.user else "",
             "invite_code": d.invite_code,
             "created_at": d.created_at,
-            "invite_url": f"{base}#/invite/{d.invite_code}",
+            "invite_url": f"{base}/#/invite/{d.invite_code}",
         })
     return result
 
@@ -98,7 +100,7 @@ def get_invite_info(code: str, db: Session = Depends(get_db)):
     if not dist:
         raise HTTPException(status_code=404, detail="邀请码无效或已失效")
     exam = dist.exam
-    now = datetime.utcnow()
+    now = app_now()
     if exam.start_time and exam.start_time > now:
         status = "未开始"
     elif exam.end_time and exam.end_time < now:
@@ -125,7 +127,11 @@ def invite_login(req: schemas.InviteLoginRequest, db: Session = Depends(get_db))
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员")
     # 生成专用的 access_token，payload中包含exam_id
-    token = create_access_token({"sub": str(user.id), "exam_id": dist.exam_id})
+    token = create_access_token({
+        "sub": str(user.id),
+        "exam_id": dist.exam_id,
+        "iat": epoch_seconds(),
+    })
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -142,7 +148,7 @@ def get_exam_login_info(exam_id: int, db: Session = Depends(get_db)):
     exam = crud.get_exam(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
-    now = datetime.utcnow()
+    now = app_now()
     if exam.start_time and exam.start_time > now:
         status = "未开始"
     elif exam.end_time and exam.end_time < now:
@@ -170,31 +176,30 @@ def exam_login(req: schemas.ExamLoginRequest, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员")
     # 验证密码
-    from passlib.context import CryptContext
-    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    if not pwd_ctx.verify(req.password, user.password_hash):
+    from ..auth import verify_password
+    if not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="密码错误")
     # 检查补考次数限制
     exam = crud.get_exam(db, req.exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
-    from .. import models
-    taken_count = db.query(models.ExamRecord).filter(
-        models.ExamRecord.user_id == user.id,
-        models.ExamRecord.exam_id == req.exam_id
-    ).count()
-    if exam.retake_limit > 0 and taken_count >= exam.retake_limit:
+    # 按"已用轮次"判次数上限：超时的作答同样占一轮，
+    # 考生反复超时重进不能变相延长总作答时长。
+    used_rounds, _ = crud.settle_and_count_rounds(db, exam, user.id)
+    if exam.retake_limit > 0 and used_rounds >= exam.retake_limit:
         raise HTTPException(status_code=403, detail=f"该考试每人最多参加 {exam.retake_limit} 次，您已达上限")
     # 检查是否在允许参加考试的名单中（如果名单非空）
-    allowed = db.query(models.ExamDistribution).filter(
-        models.ExamDistribution.exam_id == req.exam_id
-    ).all()
-    if len(allowed) > 0:
-        allowed_user_ids = {d.user_id for d in allowed}
-        if user.id not in allowed_user_ids:
-            raise HTTPException(status_code=403, detail="您不用参加此次考试，谢谢！")
-    # 生成 token，payload中包含exam_id
-    token = create_access_token({"sub": str(user.id), "exam_id": req.exam_id})
+    if not crud.is_exam_allowed(db, req.exam_id, user.id):
+        raise HTTPException(status_code=403, detail="您不用参加此次考试，谢谢！")
+    # 生成 token，payload中包含exam_id 与签发时刻 iat。
+    # iat 用于服务端核算考试用时，防止考生清空浏览器存储后无限延长考试时间。
+    token = create_access_token({
+        "sub": str(user.id),
+        "exam_id": req.exam_id,
+        # 必须是整数时间戳：jose 对 ISO 字符串的 iat 会直接抛
+        # JWTClaimsError，导致令牌解码失败、考生登录后立刻 401。
+        "iat": epoch_seconds(),
+    })
     return {
         "access_token": token,
         "token_type": "bearer",

@@ -10,6 +10,7 @@ if (!existsSync(uploadDir)) {
 
 export default defineConfig({
   plugins: [vue()],
+  base: '/',
   resolve: {
     alias: { '@': resolve(__dirname, 'src') }
   },
@@ -19,9 +20,17 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      '/api/uploads': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/uploads': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
       }
     }
   }

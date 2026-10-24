@@ -3,9 +3,9 @@
     <!-- 顶部信息栏 -->
     <div class="exam-header">
       <div class="exam-title">{{ exam?.title }}</div>
-      <div class="exam-timer" :class="{ warning: timeLeft < 300 }">
+      <div class="exam-timer" :class="{ warning: timeLeftReady && timeLeft < 300 }">
         <el-icon><Timer /></el-icon>
-        <span class="timer-text">{{ formatTime(timeLeft) }}</span>
+        <span class="timer-text">{{ timeLeftReady ? formatTime(timeLeft) : '--:--' }}</span>
       </div>
     </div>
 
@@ -113,16 +113,26 @@
           <span class="btn-text">提交答卷</span>
         </el-button>
       </div>
-      <!-- 移动端答题进度条 -->
-      <div class="mobile-nav">
-        <div class="mobile-nav-grid">
-          <div
-            v-for="(q, i) in questions"
-            :key="q.id"
-            class="mobile-nav-dot"
-            :class="{ answered: isAnswered(q), current: i === currentIndex }"
-            @click="currentIndex = i"
-          >{{ i + 1 }}</div>
+      <!--
+        移动端答题卡：默认收起。
+        50 道题把题号全部铺开，底部这一大块会把上方的题干和选项挤出屏幕，
+        手机上根本看不全选项，所以改成点一下才展开。
+      -->
+      <div class="mobile-nav-wrap">
+        <button type="button" class="mobile-nav-toggle" @click="toggleMobileNav">
+          <el-icon><component :is="showMobileNav ? 'ArrowDown' : 'ArrowUp'" /></el-icon>
+          <span>答题卡 · 已答 {{ answeredCount }}/{{ questions.length }}</span>
+        </button>
+        <div class="mobile-nav" v-show="showMobileNav">
+          <div class="mobile-nav-grid">
+            <div
+              v-for="(q, i) in questions"
+              :key="q.id"
+              class="mobile-nav-dot"
+              :class="{ answered: isAnswered(q), current: i === currentIndex }"
+              @click="goToQuestion(i)"
+            >{{ i + 1 }}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -137,11 +147,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getExam, submitExam } from '@/api/exams'
-import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { getExam, submitExam, startExam, saveExamDraft } from '@/api/exams'
+import { ArrowLeft, ArrowRight, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -149,13 +159,72 @@ const examId = Number(route.params.id)
 
 const loading = ref(true)
 const submitting = ref(false)
+// 移动端答题卡是否展开（默认收起，避免题号列表占掉大半屏幕）
+const showMobileNav = ref(false)
 const exam = ref(null)
 const questions = ref([])
 const currentIndex = ref(0)
 const answers = ref({})       // { questionId: 'A' }
 const multipleAnswers = ref({}) // { questionId: ['A','B'] }
-const timeLeft = ref(0)
+// null 表示倒计时还没拿到服务端截止时间。
+// 这段等待期必须显示 "--:--" 而不是 00:00，
+// 否则考生一进页面看到 00:00 会以为考试已经结束。
+const timeLeft = ref(null)
+const timeLeftReady = ref(false)
+const deadline = ref(0)        // 考试截止时间戳（毫秒），刷新后据此恢复剩余时间
+let clockOffset = 0           // 服务端与本机的时钟差（毫秒），倒计时以服务端为准
 let timer = null
+let draftTimer = null
+
+// 作答草稿：手机端切后台被系统回收、误触刷新都会丢答案，
+// 考试中掉一次作答就可能整场报废，所以把答案和截止时间落到 localStorage。
+const DRAFT_KEY = `exam_draft_${examId}`
+
+const loadDraft = () => {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
+
+const saveDraft = () => {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      userId: localStorage.getItem('userId'),
+      answers: { ...answers.value },
+      multipleAnswers: JSON.parse(JSON.stringify(multipleAnswers.value)),
+      deadline: deadline.value,
+    }))
+  } catch {
+    // 存储失败不影响答题，静默忽略
+  }
+}
+
+const clearDraft = () => localStorage.removeItem(DRAFT_KEY)
+
+// 草稿同步到服务端：手机切后台被回收时，本地缓存可能一起丢，
+// 服务端留一份，超时就能自动交卷，不至于整场报废。
+let draftSyncTimer = null
+const syncDraft = async () => {
+  clearTimeout(draftSyncTimer)
+  draftSyncTimer = setTimeout(async () => {
+    try {
+      await saveExamDraft(examId, buildAnswers())
+    } catch {
+      // 同步失败不影响答题，下次作答或提交时会再试
+    }
+  }, 800)
+}
+
+// 立即同步（提交前用，不做防抖）
+const syncDraftNow = async () => {
+  try {
+    await saveExamDraft(examId, buildAnswers())
+  } catch {
+    // 同步失败不影响答题
+  }
+}
 
 const typeTagMap = {
   single: { label: '单选', type: 'primary' },
@@ -163,16 +232,28 @@ const typeTagMap = {
   judgment: { label: '判断', type: 'success' },
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://yangsi-exam-system-production-6700.up.railway.app'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 const currentQ = computed(() => questions.value[currentIndex.value] || {})
-const currentQContent = computed(() => currentQ.value.content?.replace(/\/uploads\//g, `${API_BASE}/uploads/`) || '')
+const currentQContent = computed(() => {
+  const content = currentQ.value.content || ''
+  if (!content) return ''
+  // 将所有 /uploads 开头的图片路径替换为完整的后端URL
+  return content.replace(/src=["'](\/uploads\/[^"']+)["']/g, (match, url) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return match
+    }
+    const baseUrl = API_BASE.replace(/\/api$/, '')
+    return `src="${baseUrl}${url}"`
+  })
+})
 
 const parsedOptions = computed(() => {
   try { return JSON.parse(currentQ.value.options || '{}') } catch { return {} }
 })
 
 const formatTime = (s) => {
+  if (s == null) return '--:--'
   const m = Math.floor(s / 60)
   const sec = s % 60
   return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
@@ -186,6 +267,17 @@ const isAnswered = (q) => {
 const answeredCount = computed(() => {
   return questions.value.filter(q => isAnswered(q)).length
 })
+
+// 展开/收起移动端答题卡
+const toggleMobileNav = () => {
+  showMobileNav.value = !showMobileNav.value
+}
+
+// 点题号跳题：跳完顺手收起答题卡，把屏幕让给题目
+const goToQuestion = (i) => {
+  currentIndex.value = i
+  showMobileNav.value = false
+}
 
 const answeredPercent = computed(() => {
   if (questions.value.length === 0) return 0
@@ -216,14 +308,20 @@ const buildAnswers = () => {
 }
 
 const handleSubmit = async () => {
-  const unanswered = questions.value.filter(q => !isAnswered(q)).length
+    const unanswered = questions.value.filter(q => !isAnswered(q)).length
   if (unanswered > 0) {
-    await ElMessageBox.confirm(`还有 ${unanswered} 道题未作答，确定提交？`, '提示', { type: 'warning' })
+    // 到点自动提交时不再弹确认框，直接交卷
+      if (timeLeft.value > 0) {
+      await ElMessageBox.confirm(`还有 ${unanswered} 道题未作答，确定提交？`, '提示', { type: 'warning' })
+    }
   }
   submitting.value = true
   try {
+    await syncDraftNow()
     const record = await submitExam(examId, { exam_id: examId, answers: JSON.stringify(buildAnswers()) })
     clearInterval(timer)
+    clearInterval(draftTimer)
+    clearDraft()
     // 通知 Layout 刷新最近动态
     window.dispatchEvent(new Event('exam-submitted'))
     router.push({ path: `/exam-result/${examId}`, query: { recordId: record.id } })
@@ -237,22 +335,59 @@ onMounted(async () => {
     const data = await getExam(examId)
     exam.value = data
     questions.value = data.questions || []
-    timeLeft.value = data.duration * 60
-    timer = setInterval(() => {
-      if (timeLeft.value > 0) {
-        timeLeft.value--
-      } else {
+    // 向服务端开启/复用作答会话，取权威的截止时间。
+    // 倒计时以服务端为准，改本机时间或清缓存都延了考试时长。
+    let serverDeadline = 0
+    try {
+      const start = await startExam(examId)
+      serverDeadline = start.deadline_ms || 0
+      // 记录服务端与本机的时钟差，本地倒计时才不会因为手机时间不准而漂移
+      clockOffset = (start.server_now_ms || Date.now()) - Date.now()
+    } catch (e) {
+      // 开考接口失败（例如已超时）时，仍然进入页面，由服务端在提交时把关
+      console.warn('start exam failed', e)
+    }
+    // 恢复草稿：同一考生才复用，避免共用手机时串卷
+    const draft = loadDraft()
+    const currentUserId = localStorage.getItem('userId')
+    const isSameUser = !!draft && !!currentUserId && draft.userId === currentUserId
+    if (isSameUser) {
+      answers.value = draft.answers || {}
+      multipleAnswers.value = draft.multipleAnswers || {}
+    }
+    deadline.value = serverDeadline || (Date.now() + data.duration * 60 * 1000)
+    const tick = () => {
+      const now = Date.now() + clockOffset
+      timeLeft.value = Math.max(0, Math.round((deadline.value - now) / 1000))
+      if (timeLeft.value <= 0) {
         clearInterval(timer)
         ElMessage.warning('考试时间到，自动提交')
         handleSubmit()
       }
+    }
+    tick()
+    timeLeftReady.value = true
+    timer = setInterval(() => {
+      tick()
     }, 1000)
+    // 定期把草稿同步到服务端
+    draftTimer = setInterval(syncDraft, 10000)
   } finally {
     loading.value = false
   }
 })
 
-onUnmounted(() => clearInterval(timer))
+// 每次作答都落盘，刷新或切后台都不丢答案
+watch([answers, multipleAnswers], () => {
+  saveDraft()
+  syncDraft()
+}, { deep: true })
+
+onUnmounted(() => {
+  clearInterval(timer)
+  clearInterval(draftTimer)
+  clearTimeout(draftSyncTimer)
+})
 </script>
 
 <style scoped>
@@ -465,6 +600,33 @@ onUnmounted(() => clearInterval(timer))
   margin: 0 4px;
 }
 
+/* 移动端答题卡容器：桌面端不显示 */
+.mobile-nav-wrap {
+  display: none;
+}
+
+.mobile-nav-toggle {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #606266;
+  background: #f7f9fb;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-nav-toggle:active {
+  background: #ecf5ff;
+  border-color: #409eff;
+}
+
 .mobile-nav {
   display: none;
   padding-top: 8px;
@@ -582,6 +744,10 @@ onUnmounted(() => clearInterval(timer))
 
   .btn-text {
     display: inline;
+  }
+
+  .mobile-nav-wrap {
+    display: block;
   }
 
   .mobile-nav {

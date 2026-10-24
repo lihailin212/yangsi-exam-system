@@ -9,7 +9,11 @@
 
     <el-card>
       <el-table :data="tableData" v-loading="loading" style="width:100%">
-        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column label="序号" width="70">
+          <template #default="{ $index, row }">
+            <span class="row-index" :title="`考试ID：${row.id}`">{{ (currentPage - 1) * pageSize + $index + 1 }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="title" label="考试名称" min-width="160" />
         <el-table-column label="时长" width="90">
           <template #default="{ row }">{{ row.duration }}分钟</template>
@@ -37,12 +41,14 @@
         <el-table-column label="结束时间" width="160">
           <template #default="{ row }">{{ formatDate(row.end_time) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="252" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="openRecords(row)">成绩</el-button>
-            <el-button size="small" type="success" @click="openDistribution(row)">分发</el-button>
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            <div class="exam-actions">
+              <el-button size="small" @click="openRecords(row)">成绩</el-button>
+              <el-button size="small" type="success" @click="openDistribution(row)">分发</el-button>
+              <el-button size="small" @click="openEdit(row)">编辑</el-button>
+              <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -126,7 +132,7 @@
               <el-cascader
                 v-model="qCategory"
                 :options="categoryOptions"
-                :props="{ checkStrictly: true, emitPath: false, label: 'label', value: 'value' }"
+                :props="{ checkStrictly: true, checkOnClickNode: true, emitPath: false, label: 'label', value: 'value' }"
                 placeholder="分类"
                 clearable
                 @change="loadQuestions"
@@ -201,6 +207,11 @@
 
     <!-- 成绩记录弹窗 -->
     <el-dialog v-model="recordsVisible" :title="`${currentExam?.title} — 成绩记录`" width="700px">
+      <div class="records-toolbar">
+        <el-button type="primary" plain size="small" :loading="exporting" @click="handleExportRecords">
+          <el-icon><Download /></el-icon> 导出成绩 Excel
+        </el-button>
+      </div>
       <el-table :data="records" v-loading="recordsLoading" style="width:100%">
         <el-table-column prop="exam_title" label="考试名称" min-width="160" />
         <el-table-column prop="employee_id" label="工号" width="100" />
@@ -303,11 +314,13 @@
 <script setup>
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getExams, createExam, updateExam, deleteExam, getExamRecords } from '@/api/exams'
+import {
+  getExams, createExam, updateExam, deleteExam, getExamRecords, exportExamExcel,
+} from '@/api/exams'
 import { getQuestions, randomQuestions, getCategories } from '@/api/questions'
 import { getExamLoginUrl, getExamStudents, setExamStudents } from '@/api/distributions'
 import { getStudents } from '@/api/students'
-import { Monitor } from '@element-plus/icons-vue'
+import { Monitor, Download } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -356,6 +369,7 @@ const categoryOptions = computed(() => {
 const recordsVisible = ref(false)
 const records = ref([])
 const recordsLoading = ref(false)
+const exporting = ref(false)
 const currentExam = ref(null)
 
 // 随机抽题
@@ -611,6 +625,21 @@ const openRecords = async (row) => {
   }
 }
 
+// 导出普通考试成绩 Excel
+const handleExportRecords = async () => {
+  if (!currentExam.value) return
+  exporting.value = true
+  try {
+    const filename = await exportExamExcel(currentExam.value.id)
+    ElMessage.success(`已导出 ${filename}`)
+  } catch (e) {
+    console.error('导出成绩失败:', e)
+    ElMessage.error('导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 // 随机抽题
 const openRandomDialog = () => {
   randomForm.single = 0
@@ -778,6 +807,11 @@ onMounted(loadData)
 }
 .page-header h2 { font-size: 18px; font-weight: 500; }
 .question-filter { display: flex; gap: 8px; }
+.records-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
 .invite-link-row {
   display: flex;
   align-items: center;
@@ -804,4 +838,15 @@ onMounted(loadData)
 .question-content-cell { font-size: 13px; max-height: 80px; overflow: hidden; text-overflow: ellipsis; }
 .question-content-cell :deep(img) { max-width: 120px; max-height: 80px; vertical-align: middle; }
 .question-content-cell :deep(p) { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 操作列：四个按钮排成一行，不换行 */
+.exam-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+.exam-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.exam-actions :deep(.el-button) { margin-right: 0; }
+/* 序号列：删除考试后序号连续重排（真实考试ID见 title 提示） */
+.row-index { cursor: default; }
 </style>

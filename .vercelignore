@@ -1,0 +1,51 @@
+# 依赖与构建产物
+node_modules
+dist
+.git
+.tools
+.playwright-cli
+skills
+.agents
+.claude
+.codebuddy
+
+# 环境变量（Vercel 控制台注入）
+.env*
+!.env.example
+
+# 本地数据库与备份
+*.db
+*.db.backup
+backend/exam.db
+backend/backups
+backend/settings.json
+
+# 图片资源（415MB，走 Vercel Blob，不进代码包）
+uploads
+backend/uploads
+
+# 临时脚本与本地文件
+_*.py
+_*.txt
+_*.json
+_*.png
+_*.sh
+*.log
+*.xlsx
+!backend/test_questions.xlsx
+
+# 迁移/部署辅助脚本
+migrate_*.py
+migrate_*.ps1
+setup_supabase.py
+update_exams.py
+add_questions.py
+supabase_migration.sql
+migration_data*.json
+railway_*.json
+dists_*.json
+
+DEPLOY.md
+README.md
+CLAUDE.md
+专业擂台赛功能设计.md

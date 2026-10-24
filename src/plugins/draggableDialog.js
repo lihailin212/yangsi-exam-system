@@ -139,7 +139,50 @@ export default {
         /* Override Element Plus max-width when restoring normal size */
         .el-dialog:not(.dialog-maximized) {
           max-width: none !important;
-          max-height: none !important;
+        }
+
+        /*
+         * 长弹窗不再顶出屏幕。
+         *
+         * Element Plus 的弹窗靠 margin-top 定位、内容多长就多高，
+         * 内容一长（题目编辑、富文本编辑器、抽题表格…）弹窗就比视口还高，
+         * 标题栏被顶到屏幕外 —— 标题栏正是拖动窗口的手柄，
+         * 够不着就等于"弹窗拖不动"。
+         *
+         * 这里给弹窗加高度上限，并让内容区自己滚动，
+         * 标题栏和底部按钮始终留在可视区内，弹窗随时能拖。
+         */
+        .el-dialog:not(.is-fullscreen):not(.dialog-maximized) {
+          max-height: calc(100vh - var(--el-dialog-margin-top, 15vh) - 60px);
+          display: flex;
+          flex-direction: column;
+        }
+        .el-dialog:not(.is-fullscreen):not(.dialog-maximized) .el-dialog__header,
+        .el-dialog:not(.is-fullscreen):not(.dialog-maximized) .el-dialog__footer {
+          flex-shrink: 0;
+        }
+        .el-dialog:not(.is-fullscreen):not(.dialog-maximized) .el-dialog__body {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+        }
+        /* 插件的"最大化"和 Element Plus 的"全屏"：内容区同样自己滚 */
+        .el-dialog.dialog-maximized,
+        .el-dialog.is-fullscreen {
+          display: flex;
+          flex-direction: column;
+        }
+        .el-dialog.dialog-maximized .el-dialog__header,
+        .el-dialog.dialog-maximized .el-dialog__footer,
+        .el-dialog.is-fullscreen .el-dialog__header,
+        .el-dialog.is-fullscreen .el-dialog__footer {
+          flex-shrink: 0;
+        }
+        .el-dialog.dialog-maximized .el-dialog__body,
+        .el-dialog.is-fullscreen .el-dialog__body {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
         }
       `
       document.head.appendChild(style)
@@ -210,6 +253,7 @@ export default {
       if (header) {
         header.style.setProperty('position', 'relative', 'important')
       }
+
 
       if (header && !header.querySelector('.dialog-control-btns')) {
         const btnContainer = document.createElement('div')
@@ -323,13 +367,26 @@ export default {
         if (e.target.closest('.dialog-control-btn')) return
         e.preventDefault()
         el.classList.add('is-dragging')
-        // Dialog is position:fixed — getBoundingClientRect gives viewport coords naturally
-        const rect = el.getBoundingClientRect()
-        const offsetX = e.clientX - rect.left
-        const offsetY = e.clientY - rect.top
+        /*
+         * 坐标系：Element Plus 把 .el-dialog 渲染成 position:relative
+         * （靠 margin:auto 水平居中），所以这里的 left/top 是"相对原位的偏移量"，
+         * 不是视口绝对坐标。
+         *
+         * 之前的写法把鼠标的视口坐标（e.clientX/clientY）直接写进了 left/top，
+         * 于是窗口被整体平移了"鼠标坐标"那么多像素（几百上千），
+         * 表现就是一按下鼠标就自己飞到屏幕右下角。
+         *
+         * 现在改成增量：只写入鼠标移动的差值，和偏移量口径一致，拖哪儿就是哪儿。
+         */
+        const startX = e.clientX
+        const startY = e.clientY
+        const baseLeft = parseFloat(el.style.left) || 0
+        const baseTop = parseFloat(el.style.top) || 0
         const onMM = (ev) => {
-          el.style.left = `${ev.clientX - offsetX}px`
-          el.style.top = `${ev.clientY - offsetY}px`
+          const dx = ev.clientX - startX
+          const dy = ev.clientY - startY
+          el.style.left = `${baseLeft + dx}px`
+          el.style.top = `${baseTop + dy}px`
           el.style.right = 'auto'
           el.style.bottom = 'auto'
           el.style.transform = 'none'

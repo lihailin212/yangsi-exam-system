@@ -3,12 +3,14 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --config vite.lan.config.js",
     "build": "vite build",
     "preview": "vite preview",
     "start": "npx serve -s dist -l $PORT"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.0",
+    "@supabase/supabase-js": "^2.104.0",
     "@wangeditor/editor": "^5.1.23",
     "@wangeditor/editor-for-vue": "^1.0.2",
     "axios": "^1.15.0",

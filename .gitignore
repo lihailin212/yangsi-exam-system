@@ -42,3 +42,60 @@ backend/app/routers/__pycache__/
 
 # Uploads
 settings.json
+
+.vercel
+.env*
+
+# ---- 版本控制清理（V1.0）----
+# 运行时上传的图片：题库里的图片已经放到 Vercel Blob，
+# 本地 uploads 只是缓存/备份，不进版本库（否则每次上传都会产生几百 MB 的提交）
+uploads/
+backend/uploads/
+
+# 临时脚本和调试产物
+_*.py
+_*.json
+_*.txt
+_*.png
+_*.log
+*.log
+_tmp_*
+
+# 工具目录
+.agents/
+.codebuddy/
+.claude/skills/
+.playwright-cli/
+.tools/
+
+# 导出/迁移中间数据
+dists_*.json
+migration_data*.json
+migration_data_supabase.json
+railway_*.json
+_verify_*.txt
+
+# Excel 测试产物
+backend/test_*.xlsx
+backend/manual_export.xlsx
+test_*.xlsx
+
+# 一次性维护/排查脚本（不是产品代码，不进版本库）
+backend/check_*.py
+backend/cleanup*.py
+backend/fix_*.py
+backend/reset_pwd.py
+backend/list_users.py
+backend/verify_*.py
+backend/uvicorn.err
+backend/test_result.txt
+backend/q96_options.txt
+backend/exam.db.backup
+backend/backups/
+
+# 登录态 / 本机状态
+iqc_login_state.json
+.claude/settings.local.json
+
+# 误生成的空文件（内容是一句乱码报错）
+/!
