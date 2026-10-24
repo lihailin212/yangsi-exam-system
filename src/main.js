@@ -7,6 +7,7 @@ import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import App from './App.vue'
 import router from './router'
 import './assets/styles.css'
+import draggableDialog from './plugins/draggableDialog'
 
 const app = createApp(App)
 
@@ -17,4 +18,5 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
+app.use(draggableDialog)
 app.mount('#app')

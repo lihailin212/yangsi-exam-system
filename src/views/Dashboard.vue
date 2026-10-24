@@ -36,8 +36,9 @@
               <span class="stat-value" :class="`text-${stat.color}`">{{ stat.value }}</span>
               <span class="stat-label">{{ stat.label }}</span>
               <div class="stat-trend" v-if="stat.trend">
-                <el-icon><component :is="stat.trend > 0 ? 'Top' : 'Bottom'" /></el-icon>
-                <span>{{ Math.abs(stat.trend) }}%</span>
+                <el-icon><component :is="stat.trend.dir === 'down' ? 'Bottom' : 'Top'" /></el-icon>
+                <span>{{ stat.trend.text }}</span>
+                <span class="stat-trend-label">{{ stat.trendLabel }}</span>
               </div>
             </div>
           </div>
@@ -88,7 +89,7 @@
               <el-icon><Clock /></el-icon>
               最近动态
             </h2>
-            <el-button type="primary" link>查看全部</el-button>
+            <el-button type="primary" link @click="openAllActivity">查看全部</el-button>
           </div>
           <div class="activity-list">
             <div 
@@ -104,6 +105,10 @@
                 <p class="activity-text">{{ activity.text }}</p>
                 <span class="activity-time">{{ activity.time }}</span>
               </div>
+            </div>
+            <div class="activity-empty" v-if="!recentActivity.length">
+              <el-icon><Clock /></el-icon>
+              <span>还没有动态</span>
             </div>
           </div>
         </div>
@@ -124,20 +129,21 @@
                 v-for="period in ['本周', '本月', '本年']" 
                 :key="period"
                 :class="['chart-tab', { active: activePeriod === period }]"
-                @click="activePeriod = period"
+                @click="switchPeriod(period)"
               >
                 {{ period }}
               </button>
             </div>
           </div>
-          <div class="chart-placeholder">
-            <div class="chart-bars">
-              <div class="chart-bar" v-for="(val, index) in chartData" :key="index" :style="{ height: `${val}%` }">
-                <span class="bar-tooltip">{{ val }}</span>
+          <div class="chart-placeholder" v-loading="trendLoading">
+            <div class="chart-bars" v-if="chartData.length">
+              <div class="chart-bar" v-for="item in chartData" :key="item.label" :style="{ height: `${item.height}%` }">
+                <span class="bar-tooltip">{{ item.label }}：{{ item.count }} 份</span>
               </div>
             </div>
-            <div class="chart-labels">
-              <span v-for="day in chartLabels" :key="day">{{ day }}</span>
+            <div class="chart-empty" v-else>暂无交卷数据</div>
+            <div class="chart-labels" v-if="chartData.length">
+              <span v-for="item in chartData" :key="item.label">{{ item.label }}</span>
             </div>
           </div>
         </div>
@@ -173,18 +179,37 @@
         </div>
       </el-col>
     </el-row>
+
+    <!-- 全部动态 -->
+    <el-drawer v-model="showAllActivity" title="全部动态" size="420px">
+      <div class="activity-list drawer-list">
+        <div v-for="(activity, index) in allActivityView" :key="index" class="activity-item">
+          <div class="activity-icon" :style="{ background: activity.color }">
+            <el-icon><component :is="activity.icon" /></el-icon>
+          </div>
+          <div class="activity-content">
+            <p class="activity-text">{{ activity.text }}</p>
+            <span class="activity-time">{{ activity.time }} · {{ activity.raw.time }}</span>
+          </div>
+        </div>
+        <div class="activity-empty" v-if="!allActivityView.length">
+          <el-icon><Clock /></el-icon>
+          <span>还没有动态</span>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getStatistics } from '@/api/statistics'
-import { 
-  User, 
-  Edit, 
-  Document, 
-  TrendCharts, 
+import { getStatistics, getRecentActivity, getStatisticsTrend } from '@/api/statistics'
+import {
+  User,
+  Edit,
+  Document,
+  TrendCharts,
   Lightning,
   ArrowRight,
   Clock,
@@ -198,50 +223,74 @@ import {
 const router = useRouter()
 const loading = ref(false)
 const stats = ref(null)
+const activities = ref([])
+const allActivities = ref([])
+const showAllActivity = ref(false)
+const trendBuckets = ref([])
+const trendLoading = ref(false)
+
+// 本周 / 本月 / 本年 → 趋势接口的天数（超过 60 天后端按月返回）
+const PERIOD_DAYS = { '本周': 7, '本月': 30, '本年': 365 }
 const activePeriod = ref('本周')
 
 const statsData = computed(() => {
   const s = stats.value || {}
+  const d = s.deltas || {}
+  const counts = d.counts || {}
+  // trend 为 null 表示上一个 7 天没有数据，算不出百分比，改显示"新增 N"
+  const trendOf = (key) => {
+    if (d[key] === null || d[key] === undefined) {
+      const c = counts[key]
+      return c ? { text: `新增 ${c}`, dir: 'up' } : null
+    }
+    const unit = key === 'pass' ? ' 个百分点' : '%'
+    const dir = d[key] > 0 ? 'up' : (d[key] < 0 ? 'down' : 'flat')
+    return { text: `${Math.abs(d[key])}${unit}`, dir }
+  }
   return [
-    { 
-      id: 'users', 
-      label: '总学员数', 
-      value: s.total_users ?? 0, 
-      icon: 'User', 
+    {
+      id: 'users',
+      label: '总学员数',
+      value: s.total_users ?? 0,
+      icon: 'User',
       color: 'primary',
       gradient: 'linear-gradient(135deg, #0D7377, #14FFEC)',
       glow: 'rgba(13, 115, 119, 0.3)',
-      trend: 12
+      trend: trendOf('users'),
+      trendLabel: '较上周'
     },
-    { 
-      id: 'exams', 
-      label: '考试总数', 
-      value: s.total_exams ?? 0, 
-      icon: 'Edit', 
+    {
+      id: 'exams',
+      label: '考试总数',
+      value: s.total_exams ?? 0,
+      icon: 'Edit',
       color: 'success',
       gradient: 'linear-gradient(135deg, #67C23A, #95d475)',
       glow: 'rgba(103, 194, 58, 0.3)',
-      trend: 8
+      trend: trendOf('exams'),
+      trendLabel: '较上周'
     },
-    { 
-      id: 'records', 
-      label: '答卷总数', 
-      value: s.total_records ?? 0, 
-      icon: 'Document', 
+    {
+      id: 'records',
+      label: '答卷总数',
+      value: s.total_records ?? 0,
+      icon: 'Document',
       color: 'warning',
       gradient: 'linear-gradient(135deg, #E6A23C, #f3d19e)',
       glow: 'rgba(230, 162, 60, 0.3)',
-      trend: -3
+      trend: trendOf('records'),
+      trendLabel: '较上周'
     },
-    { 
-      id: 'pass', 
-      label: '及格率', 
-      value: s.pass_rate ? s.pass_rate + '%' : '0%', 
-      icon: 'TrendCharts', 
+    {
+      id: 'pass',
+      label: '及格率',
+      value: s.pass_rate ? s.pass_rate + '%' : '0%',
+      icon: 'TrendCharts',
       color: 'danger',
       gradient: 'linear-gradient(135deg, #F56C6C, #f89898)',
       glow: 'rgba(245, 108, 108, 0.3)',
-      trend: 5
+      trend: trendOf('pass'),
+      trendLabel: '较上周'
     },
   ]
 })
@@ -252,24 +301,105 @@ const quickActions = [
   { path: '/students', icon: 'User', title: '学员管理', desc: '添加学员，查看学习和考试记录', gradient: 'linear-gradient(135deg, #E6A23C, #f3d19e)' },
 ]
 
-const recentActivity = [
-  { icon: 'Document', text: '张三完成了「医学基础考核」', time: '10分钟前', color: 'rgba(13, 115, 119, 0.15)' },
-  { icon: 'Edit', text: '李四开始作答「临床技能测试」', time: '25分钟前', color: 'rgba(230, 162, 60, 0.15)' },
-  { icon: 'TrendCharts', text: '王五考试成绩优秀 (92分)', time: '1小时前', color: 'rgba(103, 194, 58, 0.15)' },
-  { icon: 'User', text: '新学员赵六加入系统', time: '2小时前', color: 'rgba(20, 255, 236, 0.15)' },
-]
+// 最近动态：以前是写死的"张三完成了…""李四开始作答…"，
+// 现在由后端从交卷记录 / 作答会话 / 新学员注册里取真实数据。
+const ACTIVITY_STYLE = {
+  exam_completed: { icon: 'Document', color: 'rgba(13, 115, 119, 0.15)' },
+  exam_started: { icon: 'Edit', color: 'rgba(230, 162, 60, 0.15)' },
+  user_joined: { icon: 'User', color: 'rgba(20, 255, 236, 0.1)' },
+}
 
-const chartData = ref([45, 65, 52, 78, 60, 85, 70])
-const chartLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+function activityText(a) {
+  if (a.type === 'exam_completed') {
+    const score = a.total_score ? `（${Math.round(a.score)}/${Math.round(a.total_score)}分）` : ''
+    return `${a.user_name} 完成了「${a.exam_title}」${score}`
+  }
+  if (a.type === 'exam_started') {
+    return `${a.user_name} 开始作答「${a.exam_title}」`
+  }
+  return `新学员 ${a.user_name} 加入系统`
+}
 
-const progressData = [
-  { label: '题库完成度', value: 78, color: '#0D7377' },
-  { label: '本月考试率', value: 92, color: '#67C23A' },
-  { label: '学习时长', value: 65, color: '#E6A23C' },
-  { label: '知识点掌握', value: 85, color: '#14FFEC' },
-]
+function formatRelative(ts) {
+  if (!ts) return ''
+  const diff = Date.now() - ts
+  if (diff < 0) return '刚刚'
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min}分钟前`
+  const hour = Math.floor(min / 60)
+  if (hour < 24) return `${hour}小时前`
+  const day = Math.floor(hour / 24)
+  if (day < 30) return `${day}天前`
+  if (day < 365) return `${Math.floor(day / 30)}个月前`
+  const d = new Date(ts)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function toActivityView(a) {
+  const style = ACTIVITY_STYLE[a.type] || ACTIVITY_STYLE.user_joined
+  return {
+    icon: style.icon,
+    color: style.color,
+    text: activityText(a),
+    time: formatRelative(a.ts),
+    raw: a
+  }
+}
+
+const recentActivity = computed(() => activities.value.map(toActivityView))
+const allActivityView = computed(() => allActivities.value.map(toActivityView))
+
+// 考试趋势：真实交卷量，柱高按最大值归一
+const chartData = computed(() => {
+  const buckets = trendBuckets.value || []
+  const max = Math.max(1, ...buckets.map(b => b.count))
+  return buckets.map(b => ({
+    label: b.label,
+    count: b.count,
+    height: b.count > 0 ? Math.max(6, Math.round((b.count / max) * 100)) : 2
+  }))
+})
+const chartLabels = computed(() => chartData.value.map(d => d.label))
+
+const progressData = computed(() => {
+  const p = (stats.value || {}).progress || {}
+  return [
+    { label: '学员参与率', value: p.participation_rate ?? 0, color: '#0D7377' },
+    { label: '本月考试率', value: p.month_exam_rate ?? 0, color: '#67C23A' },
+    { label: '平均得分率', value: p.avg_score_rate ?? 0, color: '#E6A23C' },
+    { label: '及格率', value: p.pass_rate ?? 0, color: '#F56C6C' }
+  ]
+})
 
 const goTo = (path) => router.push(path)
+
+async function loadTrend() {
+  trendLoading.value = true
+  try {
+    trendBuckets.value = await getStatisticsTrend(PERIOD_DAYS[activePeriod.value] || 7)
+  } catch {
+    trendBuckets.value = []
+  } finally {
+    trendLoading.value = false
+  }
+}
+
+function switchPeriod(period) {
+  if (activePeriod.value === period) return
+  activePeriod.value = period
+  loadTrend()
+}
+
+async function openAllActivity() {
+  try {
+    allActivities.value = await getRecentActivity(50)
+  } catch {
+    allActivities.value = activities.value
+  }
+  showAllActivity.value = true
+}
 
 onMounted(async () => {
   loading.value = true
@@ -280,6 +410,12 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  try {
+    activities.value = await getRecentActivity(6)
+  } catch {
+    activities.value = []
+  }
+  loadTrend()
 })
 </script>
 
@@ -757,5 +893,32 @@ onMounted(async () => {
   .chart-bar {
     width: 30px;
   }
+}
+
+/* 真实数据后的补充样式 */
+.stat-trend-label { opacity: 0.7; font-size: 11px; margin-left: 2px; }
+.chart-empty {
+  width: 100%;
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 13px;
+}
+.activity-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 0;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 13px;
+}
+.drawer-list .activity-item {
+  background: #f7f9fb;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
 }
 </style>

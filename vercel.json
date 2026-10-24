@@ -1,15 +1,21 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": ".",
+      "framework": "vite",
+      "outputDirectory": "dist"
+    },
+    "backend": {
+      "root": "backend",
+      "entrypoint": "app.main:app",
+      "framework": "fastapi"
     }
-  ],
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/api/(.*)", "dest": "https://yangsi-exam-system-production-6700.up.railway.app/api/$1" },
-    { "src": "/uploads/(.*)", "dest": "https://yangsi-exam-system-production-6700.up.railway.app/uploads/$1" }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "backend" } },
+    { "source": "/uploads/(.*)", "destination": { "service": "backend" } },
+    { "source": "/ws/(.*)", "destination": { "service": "backend" } },
+    { "source": "/(.*)", "destination": { "service": "frontend" } }
   ]
 }

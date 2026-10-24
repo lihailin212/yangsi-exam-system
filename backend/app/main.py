@@ -1,11 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import os
+from fastapi.responses import FileResponse, RedirectResponse
 from .database import engine, Base, SessionLocal
 from . import models
+from .config import APP_VERSION
 from .auth import hash_password
-from .routers import auth, exams, questions, students, statistics, upload, settings, distributions
+from .routers import auth, exams, questions, students, statistics, upload, settings, distributions, arenas, arenas_ws
 
 # 创建所有表
 Base.metadata.create_all(bind=engine)
@@ -25,24 +26,90 @@ def _backfill_total_score():
     finally:
         db.close()
 
+def _add_column(ddl: str) -> None:
+    """幂等地补一列。
+
+    每条语句使用独立连接：单条 DDL 失败（如列已存在）会让该连接进入
+    aborted 事务状态，若复用同一连接，后续迁移会连环失败并被静默吞掉。
+    """
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(ddl))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+
+def _sync_sequences() -> None:
+    """把 Postgres 主键序列重置到各表当前的最大 id。
+
+    历史数据从 SQLite 迁移过来时是显式写入 id 的，序列却仍停在 1。
+    之后任何 INSERT 都会撞主键唯一约束（新建学员、新增题目、考生交卷
+    全部 500）。这里按每张表的实际最大值重置，幂等且可重复执行。
+
+    SQLite 的 rowid 由引擎自行维护，不需要处理。
+    """
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.connect() as conn:
+        tables = conn.execute(text(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+        )).scalars().all()
+        for table in tables:
+            try:
+                seq_name = conn.execute(
+                    text("SELECT pg_get_serial_sequence(:t, 'id')"),
+                    {"t": table},
+                ).scalar()
+                if not seq_name:
+                    continue
+                max_id = conn.execute(
+                    text(f'SELECT COALESCE(MAX(id), 0) FROM "{table}"')
+                ).scalar()
+                conn.execute(
+                    text("SELECT setval(CAST(:seq AS regclass), :val, true)"),
+                    {"seq": seq_name, "val": max_id},
+                )
+            except Exception:
+                conn.rollback()
+                continue
+        conn.commit()
+
+
 with engine.connect() as conn:
     try:
         conn.execute(text("ALTER TABLE exams ADD COLUMN total_score FLOAT DEFAULT 0"))
         conn.commit()
-        _backfill_total_score()
     except Exception:
-        pass
-    try:
-        conn.execute(text("ALTER TABLE exams ADD COLUMN retake_limit INTEGER DEFAULT 0"))
-        conn.commit()
-    except Exception:
-        pass
-    try:
-        conn.execute(text("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"))
-        conn.commit()
-    except Exception:
-        pass
+        conn.rollback()
+    _backfill_total_score()
 
+_add_column("ALTER TABLE exams ADD COLUMN retake_limit INTEGER DEFAULT 0")
+_add_column("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+_add_column("ALTER TABLE arenas ADD COLUMN current_question_id INTEGER")
+_sync_sequences()
+
+# 布尔列历史上允许为 NULL，序列化时会直接报错，这里回填并收紧约束
+with engine.connect() as conn:
+    try:
+        conn.execute(text(
+            "UPDATE arena_teams SET help_used_this_round = FALSE "
+            "WHERE help_used_this_round IS NULL"
+        ))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    try:
+        conn.execute(text(
+            "ALTER TABLE arena_teams ALTER COLUMN help_used_this_round "
+            "SET DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE arena_teams ALTER COLUMN help_used_this_round SET NOT NULL"
+        ))
+        conn.commit()
+    except Exception:
+        conn.rollback()
 app = FastAPI(title="医学考试系统 API", version="1.0.0")
 
 app.add_middleware(
@@ -65,12 +132,45 @@ app.include_router(distributions.router)
 app.include_router(distributions.invite_router)
 app.include_router(distributions.exam_login_router)
 app.include_router(distributions.exam_student_router)
+app.include_router(arenas.router)
+app.include_router(arenas_ws.router)
 
-# Railway 持久化磁盘路径（生产环境）
-_DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", os.path.join(os.path.dirname(__file__), ".."))
-_UPLOADS_DIR = os.path.join(_DATA_DIR, "uploads")
-os.makedirs(os.path.join(_UPLOADS_DIR, "images"), exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=_UPLOADS_DIR), name="uploads")
+@app.get("/uploads/{filename:path}")
+def serve_upload(filename: str):
+    """提供 /uploads/images/xxx：先读本地磁盘，读不到再重定向到 Blob。
+
+    以前这里只会重定向到 Blob，没配 BLOB_READ_WRITE_TOKEN 时直接 404，
+    于是本地库（题库里存的是 /uploads/images/xxx 相对路径）里的题图全军覆没。
+    """
+    from .storage import blob_url_for, blob_enabled, find_local_image
+
+    path = find_local_image(filename)
+    if path:
+        return FileResponse(path)
+    if blob_enabled():
+        return RedirectResponse(url=blob_url_for(filename), status_code=302)
+    raise HTTPException(status_code=404, detail="文件不存在")
+
+@app.on_event("startup")
+def warn_local_database():
+    """没配 DATABASE_URL 时后端会静默切到本地 SQLite 题库，提醒一句。
+
+    这不是错误（本地开发确实可能只想用 exam.db），但局域网开考时如果忘了
+    载入 .env.local，考生看到的是另一套题，题图也全是本地相对路径，
+    排查起来很费时间。
+    """
+    from .database import DATABASE_URL
+
+    if not DATABASE_URL:
+        import sys
+
+        print(
+            "[警告] 未设置 DATABASE_URL，正在使用本地 SQLite 题库 "
+            "(backend/exam.db)。局域网开考请用 scripts/start-lan.ps1 启动，"
+            "或先载入 .env.local。",
+            file=sys.stderr,
+        )
+
 
 @app.on_event("startup")
 def init_admin():
@@ -79,7 +179,7 @@ def init_admin():
     try:
         from . import crud, schemas
         if not crud.get_user_by_employee_id(db, "admin"):
-            crud.create_user(db, schemas.UserCreate(
+            admin = crud.create_user(db, schemas.UserCreate(
                 employee_id="admin",
                 name="管理员",
                 password="admin123",
@@ -88,11 +188,11 @@ def init_admin():
                 is_admin=True,
             ))
             # 创建示例数据
-            _create_sample_data(db, crud, schemas)
+            _create_sample_data(db, crud, schemas, admin.id)
     finally:
         db.close()
 
-def _create_sample_data(db, crud, schemas):
+def _create_sample_data(db, crud, schemas, creator_id: int):
     """创建示例考试数据"""
     # 创建示例题目
     sample_questions = [
@@ -176,8 +276,14 @@ def _create_sample_data(db, crud, schemas):
         judgment_score=5,
         retake_limit=3,
         question_ids=[q.id for q in created_questions]
-    ))
+    ), creator_id)
 
 @app.get("/")
 def root():
-    return {"message": "医学考试系统 API 运行中"}
+    return {"message": "医学考试系统 API 运行中", "version": APP_VERSION}
+
+
+@app.get("/api/version")
+def get_version():
+    """当前后端版本号。线上排查时先打这个接口，确认跑的是哪一版。"""
+    return {"version": APP_VERSION}

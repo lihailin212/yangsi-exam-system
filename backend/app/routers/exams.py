@@ -1,8 +1,14 @@
+import json
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from urllib.parse import quote
 from ..database import get_db
 from .. import crud, schemas
 from ..auth import get_current_user, require_admin
+from ..timeutil import SUBMIT_GRACE_SECONDS, app_now, to_epoch_ms, utc_now
 
 router = APIRouter(prefix="/api/exams", tags=["exams"])
 record_router = APIRouter(prefix="/api/exam-records", tags=["records"])
@@ -28,7 +34,7 @@ def list_exams(skip: int = 0, limit: int = 20, db: Session = Depends(get_db), _=
     return {"items": result, "total": total}
 
 @router.get("/{exam_id}")
-def get_exam(exam_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     exam = crud.get_exam(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
@@ -37,12 +43,24 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), _=Depends(get_current_
         "multiple": exam.multiple_score,
         "judgment": exam.judgment_score,
     }
+    # 只有管理员，或已交卷且无法再重考的考生，才能看到正确答案与解析，
+    # 避免考生通过浏览器开发者工具直接读取答案。
+    used_rounds, answered_count = crud.get_exam_progress(db, exam_id, current_user.id)
+    retake_exhausted = exam.retake_limit > 0 and used_rounds >= exam.retake_limit
+    exam_finished = exam.end_time is not None and exam.end_time < app_now()
+    reveal_answers = current_user.is_admin or (
+        answered_count > 0 and (retake_exhausted or exam_finished)
+    )
+    exam_questions = crud.get_exam_questions(exam)
     questions = []
-    for q in exam.questions:
+    for q in exam_questions:
         qd = schemas.QuestionOut.model_validate(q).model_dump()
+        if not reveal_answers:
+            qd["answer"] = ""
+            qd["analysis"] = ""
         qd["score"] = score_map.get(q.type, 10)
         questions.append(qd)
-    return {
+    result = {
         "id": exam.id,
         "title": exam.title,
         "duration": exam.duration,
@@ -56,8 +74,76 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), _=Depends(get_current_
         "total_score": exam.total_score,
         "created_at": exam.created_at,
         "questions": questions,
-        "question_ids": [q.id for q in exam.questions],
+        "question_ids": [q.id for q in exam_questions],
     }
+    return result
+
+
+@router.post("/{exam_id}/start")
+def start_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """考生进入考试：开启（或复用）本次作答会话，并下发权威截止时间。
+
+    截止时间以服务端记录为准，前端只是据此显示倒计时。
+    这样刷新页面、换设备、清浏览器缓存都无法把考试时间延长。
+    """
+    exam = crud.get_exam(db, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="考试不存在")
+    now = app_now()
+    if exam.start_time and exam.start_time > now:
+        raise HTTPException(status_code=403, detail="考试尚未开始")
+    if exam.end_time and exam.end_time < now:
+        raise HTTPException(status_code=403, detail="考试已结束")
+    # 允许名单校验：名单非空时，只有名单内考生可以作答
+    if not crud.is_exam_allowed(db, exam_id, current_user.id):
+        raise HTTPException(status_code=403, detail="您不用参加此次考试，谢谢！")
+    # 先结算上一轮超时（按草稿自动交卷），再按"已用轮次"判次数上限。
+    # 超时也占一轮，否则考生反复超时重进就能变相延长总作答时长。
+    used, latest = crud.settle_and_count_rounds(db, exam, current_user.id)
+    if exam.retake_limit > 0 and used >= exam.retake_limit:
+        raise HTTPException(status_code=403, detail=f"该考试每人最多参加 {exam.retake_limit} 次，您已达上限")
+    attempt = crud.start_attempt(db, exam, current_user.id, latest=latest)
+    if not attempt:
+        raise HTTPException(status_code=500, detail="无法开启作答会话")
+    return {
+        "attempt_id": attempt.id,
+        "deadline_ms": to_epoch_ms(attempt.deadline_at),
+        "server_now_ms": to_epoch_ms(utc_now()),
+        "duration": exam.duration,
+    }
+
+
+@router.post("/{exam_id}/draft")
+def save_exam_draft(exam_id: int, payload: dict, db: Session = Depends(get_db),
+                     current_user=Depends(get_current_user)):
+    """保存作答草稿到服务端。
+
+    手机端切后台、断网、浏览器被回收都可能丢答案，草稿落到服务端后，
+    即便超时也能按已保存的内容自动交卷，不至于整场报废。
+    """
+    attempt = crud.get_open_attempt(db, exam_id, current_user.id)
+    if attempt is None:
+        # 没有进行中的会话时才需要新开一轮，开之前先确认还有次数，
+        # 否则草稿接口会绕过 start 的次数检查，白白吃掉补考机会。
+        exam = crud.get_exam(db, exam_id)
+        if not exam:
+            raise HTTPException(status_code=404, detail="考试不存在")
+        used, _ = crud.get_exam_progress(db, exam_id, current_user.id)
+        if exam.retake_limit > 0 and used >= exam.retake_limit:
+            raise HTTPException(status_code=403, detail=f"该考试每人最多参加 {exam.retake_limit} 次，您已达上限")
+        attempt = crud.start_attempt(db, exam, current_user.id)
+    if attempt is None:
+        raise HTTPException(status_code=404, detail="考试不存在")
+    # 截止时间之后不再更新草稿：服务端保存的这份快照就是"截止时刻的作答"，
+    # 超时后自动交卷按它判分，避免超时作答被算进成绩。
+    if attempt.deadline_at and (utc_now() - attempt.deadline_at).total_seconds() > SUBMIT_GRACE_SECONDS:
+        return {"ok": True, "expired": True, "deadline_ms": to_epoch_ms(attempt.deadline_at)}
+    answers = payload.get("answers")
+    if isinstance(answers, (dict, list)):
+        answers = json.dumps(answers, ensure_ascii=False)
+    attempt.draft = answers or ""
+    db.commit()
+    return {"ok": True, "deadline_ms": to_epoch_ms(attempt.deadline_at)}
 
 @router.post("", response_model=schemas.ExamOut)
 def create_exam(exam_in: schemas.ExamCreate, db: Session = Depends(get_db), current_user=Depends(require_admin)):
@@ -108,10 +194,35 @@ def delete_exam(exam_id: int, db: Session = Depends(get_db), _=Depends(require_a
 def submit_exam(exam_id: int, record_in: schemas.ExamRecordCreate,
                 db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     record_in.exam_id = exam_id
-    record = crud.submit_exam(db, record_in, current_user.id)
-    if not record:
+    exam = crud.get_exam(db, exam_id)
+    if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
-    return record
+    # 服务端为准核算考试用时：次数上限 + 本次作答的截止时间
+    used, _ = crud.get_exam_progress(db, exam_id, current_user.id)
+    if exam.retake_limit > 0 and used >= exam.retake_limit:
+        raise HTTPException(status_code=403, detail=f"该考试每人最多参加 {exam.retake_limit} 次，您已达上限")
+    attempt = crud.get_open_attempt(db, exam_id, current_user.id)
+    if attempt is None:
+        attempt = crud.start_attempt(db, exam, current_user.id)
+    # 超时后不再接受新的作答内容：按服务端已保存的草稿自动交卷，
+    # 这样既保证考生已答的内容不丢，也不会让超时的人继续作答。
+    # 一道题都没答也照样记一条 0 分成绩，这一轮就算用掉了。
+    if crud.is_attempt_expired(attempt):
+        record = crud.finalize_expired_attempt(db, exam, current_user.id, attempt=attempt)
+        if record is None:
+            # 已被并发请求结算过，返回已有的那条成绩
+            record = crud.get_latest_record(db, exam_id, current_user.id)
+        if record is None:
+            raise HTTPException(status_code=403, detail="考试时间已到，本次提交无效")
+        return record
+    record, claimed = crud.submit_attempt(db, exam, current_user.id, record_in.answers, attempt)
+    if claimed:
+        return record
+    # 会话已被其它请求结算（并发提交或超时自动交卷），返回已有的成绩而不是报错
+    latest = crud.get_latest_record(db, exam_id, current_user.id)
+    if latest is None:
+        raise HTTPException(status_code=409, detail="本次提交未能生效，请重试")
+    return latest
 
 @router.get("/{exam_id}/records")
 def get_exam_records(exam_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
@@ -133,25 +244,57 @@ def get_exam_records(exam_id: int, db: Session = Depends(get_db), _=Depends(requ
 
 @record_router.get("/recent")
 def get_recent_records(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """获取最近的考试提交记录（用于通知）"""
-    from ..models import ExamRecord
-    records = db.query(ExamRecord).order_by(ExamRecord.submitted_at.desc()).limit(10).all()
+    """获取最近的考试提交记录（用于通知）
+
+    原来逐条 r.user / r.exam 是懒加载，一次请求要打 11 条 SQL。
+    管理端每 5 秒轮询一次这个接口，11 条就等于每 5 秒 11 个数据库往返，
+    远端库上很容易堆成雪崩。这里改成一次 JOIN 取完。
+    """
+    from ..models import Exam, ExamRecord, User
+
+    rows = (
+        db.query(ExamRecord, User, Exam)
+        .outerjoin(User, ExamRecord.user_id == User.id)
+        .outerjoin(Exam, ExamRecord.exam_id == Exam.id)
+        .order_by(ExamRecord.submitted_at.desc())
+        .limit(10)
+        .all()
+    )
     result = []
-    for r in records:
-        if r.user:
+    for r, user, exam in rows:
+        if user:
             result.append({
                 "id": r.id,
                 "user_id": r.user_id,
-                "user_name": r.user.name,
-                "employee_id": r.user.employee_id,
+                "user_name": user.name,
+                "employee_id": user.employee_id,
                 "exam_id": r.exam_id,
-                "exam_title": r.exam.title if r.exam else "",
+                "exam_title": exam.title if exam else "",
                 "score": r.score,
                 "total_score": r.total_score,
                 "percent": round(r.score / r.total_score * 100, 1) if r.total_score > 0 else 0,
                 "submitted_at": r.submitted_at,
             })
     return result
+
+
+@router.get("/{exam_id}/export")
+def export_exam_records(exam_id: int, db: Session = Depends(get_db),
+                        _=Depends(require_admin)):
+    """导出普通考试成绩 Excel（总成绩表 / 答题明细 / 统计表）"""
+    exam = crud.get_exam(db, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="考试不存在")
+    buf = crud.export_exam_excel(db, exam_id)
+    if not buf:
+        raise HTTPException(status_code=404, detail="导出失败")
+    filename = f"{exam.title}_成绩表.xlsx"
+    quoted = quote(filename)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
+    )
 
 @record_router.get("/{record_id}")
 def get_record(record_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):

@@ -2,19 +2,119 @@ import json
 import re
 import io
 import os
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from .. import crud, schemas, models
 from ..auth import get_current_user, require_admin
+from ..storage import upload_image_bytes
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
+def _resolve_image_for_export(img_url: str):
+    """把题目中的图片地址解析为本地可读文件路径（供 Excel 内嵌图片）。
+    支持 Blob 公网 URL（下载到临时目录）与本地磁盘路径。"""
+    import tempfile
+    import urllib.request
+
+    if not img_url:
+        return None
+
+    if img_url.startswith("http://") or img_url.startswith("https://"):
+        try:
+            suffix = os.path.splitext(img_url.split("?")[0])[1] or ".png"
+            fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+            with os.fdopen(fd, "wb") as out:
+                with urllib.request.urlopen(img_url, timeout=30) as resp:
+                    out.write(resp.read())
+            return tmp_path
+        except Exception as e:
+            print(f"下载图片失败 {img_url}: {e}")
+            return None
+
+    base = os.environ.get(
+        "RAILWAY_VOLUME_MOUNT_PATH",
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    )
+    img_path = os.path.join(base, "uploads", "images", os.path.basename(img_url))
+    return img_path if os.path.exists(img_path) else None
+
 @router.get("")
 def list_questions(skip: int = 0, limit: int = 20, type: str = "", search: str = "", category: str = "",
-                   db: Session = Depends(get_db), _=Depends(get_current_user)):
+                   db: Session = Depends(get_db), _=Depends(require_admin)):
     items, total = crud.get_questions(db, skip=skip, limit=limit, q_type=type, search=search, category=category)
     return {"items": [schemas.QuestionOut.model_validate(q) for q in items], "total": total}
+
+# 考生自学 - 获取题目列表（只需登录即可）
+@router.get("/study")
+def study_questions(
+    skip: int = 0,
+    limit: int = 100,
+    type: str = "",
+    category: str = "",
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user)
+):
+    """获取用于自学的题目（不包含答案）"""
+    # 处理形态学父级筛选
+    if category == "形态学/":
+        # 筛选所有形态学分类的题目
+        query = db.query(models.Question).filter(models.Question.category.like('形态学/%'))
+        if type:
+            query = query.filter(models.Question.type == type)
+        total = query.count()
+        items = query.offset(skip).limit(limit).all()
+    else:
+        items, total = crud.get_questions(db, skip=skip, limit=limit, q_type=type, search="", category=category)
+
+    # 移除答案和解析，只返回题目信息
+    result = []
+    for q in items:
+        result.append({
+            "id": q.id,
+            "type": q.type,
+            "content": q.content,
+            "options": q.options,
+            "category": q.category,
+        })
+    return {"items": result, "total": total}
+
+# 获取单题详情（包含答案和解析，用于自学时点击查看）
+@router.get("/study/{question_id}")
+def study_question_detail(
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """获取题目详情（包含答案和解析）"""
+    q = db.query(models.Question).filter(models.Question.id == question_id).first()
+    if not q:
+        raise HTTPException(status_code=404, detail="题目不存在")
+    result = {
+        "id": q.id,
+        "type": q.type,
+        "content": q.content,
+        "options": q.options,
+        "answer": q.answer,
+        "analysis": q.analysis,
+        "category": q.category,
+    }
+    # 该题若正在某场考试中使用，不对考生公开答案，防止通过自学功能查答案
+    if not current_user.is_admin:
+        now = datetime.utcnow()
+        in_active_exam = db.query(models.exam_question.c.exam_id).join(
+            models.Exam, models.exam_question.c.exam_id == models.Exam.id
+        ).filter(
+            models.exam_question.c.question_id == question_id,
+            models.Exam.start_time <= now,
+            models.Exam.end_time >= now
+        ).first()
+        if in_active_exam:
+            result["answer"] = ""
+            result["analysis"] = ""
+    return result
 
 @router.post("", response_model=schemas.QuestionOut)
 def create_question(q_in: schemas.QuestionCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
@@ -121,7 +221,7 @@ def _parse_options(options_str: str) -> dict:
 
 @router.get("/export")
 async def export_questions(type: str = "", search: str = "", category: str = "",
-                          db: Session = Depends(get_db), _=Depends(get_current_user)):
+                          db: Session = Depends(get_db), _=Depends(require_admin)):
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.cell.rich_text import CellRichText, TextBlock
@@ -175,9 +275,8 @@ async def export_questions(type: str = "", search: str = "", category: str = "",
         img_row = row_idx + 1
         for img_url in img_urls:
             try:
-                img_filename = os.path.basename(img_url)
-                img_path = os.path.join(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'uploads', 'images', img_filename)
-                if os.path.exists(img_path):
+                img_path = _resolve_image_for_export(img_url)
+                if img_path:
                     img = XLImage(img_path)
                     img.width = 300
                     img.height = 200
@@ -314,3 +413,113 @@ def random_questions(data: dict, db: Session = Depends(get_db), _=Depends(requir
         "question_ids": result_ids,
         "questions": [{"id": q.id, "type": q.type} for q in selected_questions]
     }
+
+
+@router.post("/batch-create-from-images")
+def batch_create_from_images(data: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    """批量从本地文件夹图片创建单选题
+    请求体: {"folderPath": "D:\\images\\folder"}
+    每张图片文件名（去掉扩展名）作为正确答案，其他图片名作为干扰项
+    """
+    import shutil
+    import os as _os
+    import random
+    import json as _json
+    from datetime import datetime
+
+    folder_path = data.get("folderPath", "").strip()
+    if not folder_path or not _os.path.exists(folder_path):
+        raise HTTPException(status_code=400, detail="文件夹路径无效或不存在")
+
+    extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
+    images = []
+    for root, dirs, files in _os.walk(folder_path):
+        for filename in files:
+            if filename.lower().endswith(extensions):
+                images.append(filename)
+
+    if len(images) == 0:
+        raise HTTPException(status_code=400, detail="文件夹中未找到图片文件")
+
+    CATEGORY_MAP = {
+        "血片": "形态学/血细胞形态学",
+        "血细胞": "形态学/血细胞形态学",
+        "尿沉渣": "形态学/尿沉渣形态学",
+        "寄生虫": "形态学/寄生虫形态学",
+        "其他体液": "形态学/其他形态学",
+        "2020": "形态学/血细胞形态学",
+        "2021": "形态学/血细胞形态学",
+        "2022": "形态学/血细胞形态学",
+        "2023": "形态学/血细胞形态学",
+        "2024": "形态学/血细胞形态学",
+        "2025": "形态学/血细胞形态学",
+    }
+
+    def get_category(fp):
+        for key, cat in CATEGORY_MAP.items():
+            if key in fp:
+                return cat
+        return "形态学/其他形态学"
+
+    upload_dir = _os.path.join(_os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads", "images")
+    try:
+        _os.makedirs(upload_dir, exist_ok=True)
+    except OSError:
+        pass  # 生产环境只读文件系统，图片统一存 Blob
+
+    def generate_options(correct_filename, all_filenames):
+        correct_name = _os.path.splitext(correct_filename)[0]
+        other_names = [_os.path.splitext(n)[0] for n in all_filenames if n != correct_filename]
+        _random.shuffle(other_names)
+        if len(other_names) < 3:
+            others = list(set(other_names + [_os.path.splitext(n)[0] for n in all_filenames[:10]]))
+            _random.shuffle(others)
+            other_names = others
+        distractors = other_names[:3]
+        # A/B/C/D 固定顺序，正确答案随机分配到其中一个
+        correct_key = _random.choice(['A', 'B', 'C', 'D'])
+        opts = {'A': '', 'B': '', 'C': '', 'D': ''}
+        opts[correct_key] = correct_name
+        other_keys = [k for k in opts if k != correct_key]
+        for i, dk in enumerate(other_keys[:3]):
+            opts[dk] = distractors[i] if i < len(distractors) else ''
+        return opts, correct_key
+
+    now = datetime.now()
+    created = 0
+    errors = 0
+
+    for filename in images:
+        try:
+            src = _os.path.join(folder_path, filename)
+            timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
+            name, ext = _os.path.splitext(filename)
+            new_filename = f"{timestamp}_{random.randint(0,999999):06d}_{name[:30]}{ext}"
+            with open(src, "rb") as fh:
+                image_bytes = fh.read()
+            image_url = upload_image_bytes(image_bytes, new_filename)
+
+            content = f"""<p>请选择下图所示细胞名称：</p>
+<img src="{image_url}" alt="image" style="max-width: 50%;" />"""
+
+            options, correct_key = generate_options(filename, images)
+            options_json = _json.dumps(options, ensure_ascii=False)
+
+            q = models.Question(
+                type='single',
+                content=content,
+                options=options_json,
+                answer=correct_key,
+                analysis='',
+                category=get_category(src),
+                created_at=now
+            )
+            db.add(q)
+            db.commit()
+            db.refresh(q)
+            created += 1
+        except Exception as e:
+            print(f"Error creating question {filename}: {e}")
+            errors += 1
+
+    return {"created": created, "errors": errors, "total": len(images)}

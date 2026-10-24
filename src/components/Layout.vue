@@ -63,6 +63,7 @@
             </div>
           </transition>
         </div>
+        <div class="app-version">版本 {{ APP_VERSION }}</div>
       </div>
     </el-aside>
 
@@ -105,8 +106,8 @@
                   <span>通知</span>
                   <el-button type="primary" link size="small" @click="markAllRead" v-if="unreadCount > 0">全部已读</el-button>
                 </div>
-                <template v-if="notifications.length > 0">
-                  <el-dropdown-item v-for="n in notifications" :key="'notif-' + n.id">
+                <template v-if="unreadNotifications.length > 0">
+                  <el-dropdown-item v-for="n in unreadNotifications" :key="'notif-' + n.id">
                     <div class="notification-item">
                       <div class="notification-content">
                         <p>{{ n.title }}</p>
@@ -115,6 +116,9 @@
                     </div>
                   </el-dropdown-item>
                 </template>
+                <div v-else-if="notifications.length > 0" class="notification-all-read">
+                  <span>全部已读</span>
+                </div>
                 <div v-else class="notification-empty">
                   <span>暂无通知</span>
                 </div>
@@ -166,16 +170,17 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { APP_VERSION } from '@/version'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { getRecentRecords } from '@/api/exams'
-import { 
-  HomeFilled, 
-  Reading, 
-  Edit, 
-  DataAnalysis, 
-  User, 
-  Setting, 
+import {
+  HomeFilled,
+  Reading,
+  Edit,
+  DataAnalysis,
+  User,
+  Setting,
   Bell,
   Clock,
   Fold,
@@ -183,7 +188,10 @@ import {
   CaretBottom,
   SwitchButton,
   Document,
-  TrendCharts
+  TrendCharts,
+  Collection,
+  Memo,
+  Trophy
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -194,9 +202,18 @@ const settingsStore = useSettingsStore()
 const activeMenu = computed(() => route.path)
 const userName = computed(() => authStore.userName || '用户')
 const userEmployeeId = computed(() => authStore.employeeId || '')
+// 头像文字：中文习惯取名字后两字（唐金玉 -> 金玉）。
+// 但"管理员"这类岗位词切开会变成"理员"这种谁也看不懂的碎片，
+// 所以命中角色词就整个显示。
+const ROLE_WORDS = [
+  '管理员', '用户', '工作人员', '老师', '主任', '医生', '护士',
+  '领导', '专家', '考生', '学员', '访客', '超级管理员', '系统管理员',
+]
 const userInitials = computed(() => {
-  const name = userName.value
-  return name.length > 2 ? name.slice(-2) : name.slice(0, 2)
+  const name = userName.value || ''
+  if (name.length <= 2) return name
+  if (ROLE_WORDS.some((w) => name.includes(w))) return name
+  return name.slice(-2)
 })
 const userRole = computed(() => authStore.isAdmin ? '系统管理员' : '普通用户')
 
@@ -227,7 +244,9 @@ const allMenuItems = [
   { path: '/dashboard', title: '管理首页', icon: 'HomeFilled', admin: true },
   { path: '/questions', title: '题库管理', icon: 'Reading', admin: true },
   { path: '/exams', title: '考试管理', icon: 'Edit', admin: true },
+  { path: '/arena', title: '专业擂台赛', icon: 'Trophy', admin: true },
   { path: '/my-exams', title: '我的考试', icon: 'Tickets', admin: false },
+  { path: '/self-study', title: '考生自学', icon: 'Memo', admin: false },
   { path: '/statistics', title: '数据统计', icon: 'DataAnalysis', admin: true },
   { path: '/students', title: '学员管理', icon: 'User', admin: true },
   { path: '/settings', title: '系统设置', icon: 'Setting', admin: true },
@@ -260,7 +279,14 @@ const formatRelativeTime = (dateStr) => {
 }
 
 // 加载通知数据
+// 上一次请求没回来就跳过本次。轮询是无条件每 5 秒发一次的，
+// 远端库偶尔要超过 5 秒，那么请求会越堆越多，最后一起 15 秒超时，
+// 管理端就一直弹"请求失败"。
+let notifLoading = false
+
 const loadNotifications = async () => {
+  if (notifLoading) return
+  notifLoading = true
   try {
     const data = await getRecentRecords()
     const arr = Array.isArray(data) ? data : []
@@ -282,8 +308,11 @@ const loadNotifications = async () => {
     })
     notifications.value = list
   } catch (e) {
-    console.error('加载通知失败:', e)
-    notifications.value = []
+    // 只是这一轮没拉到，保留上一轮的通知。
+    // 清空会让铃铛在网络抖动时反复"清空又弹回"。
+    console.warn('加载通知失败:', e?.message || e)
+  } finally {
+    notifLoading = false
   }
 }
 
@@ -304,6 +333,10 @@ const saveReadIds = (ids) => {
 }
 
 const unreadCount = computed(() => notifications.value.filter(n => !n.read).length)
+
+const unreadNotifications = computed(() => {
+  return notifications.value.filter(n => !n.read)
+})
 
 const markAllRead = () => {
   notifications.value.forEach(n => n.read = true)
@@ -494,6 +527,14 @@ const handleCommand = (command) => {
 }
 
 /* User Section */
+.app-version {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  letter-spacing: 0.5px;
+}
+
 .sidebar-footer {
   padding: var(--space-4);
   border-top: 1px solid rgba(255, 255, 255, 0.05);
@@ -509,8 +550,9 @@ const handleCommand = (command) => {
 }
 
 .user-avatar {
-  width: 40px;
+  min-width: 40px;
   height: 40px;
+  padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   background: linear-gradient(135deg, var(--primary-500), var(--accent-500));
   display: flex;
@@ -520,6 +562,7 @@ const handleCommand = (command) => {
   font-size: 14px;
   font-weight: 600;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .user-info {
@@ -685,8 +728,9 @@ const handleCommand = (command) => {
 }
 
 .user-avatar-small {
-  width: 32px;
+  min-width: 32px;
   height: 32px;
+  padding: 0 6px;
   border-radius: var(--radius-sm);
   background: linear-gradient(135deg, var(--primary-500), var(--accent-500));
   display: flex;
@@ -695,6 +739,7 @@ const handleCommand = (command) => {
   color: #fff;
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .user-name-small {
@@ -753,6 +798,14 @@ const handleCommand = (command) => {
   text-align: center;
   color: var(--neutral-400);
   font-size: 13px;
+}
+
+.notification-all-read {
+  padding: 16px;
+  text-align: center;
+  color: var(--neutral-400);
+  font-size: 13px;
+  border-top: 1px solid var(--neutral-100);
 }
 
 /* Main Content */
