@@ -198,14 +198,14 @@ def main():
             if "=" in line and not line.strip().startswith("#"):
                 k, v = line.strip().split("=", 1)
                 os.environ.setdefault(k, v.strip().strip('"'))
-        from vercel.blob import sync as blob
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from app.storage import upload_bytes
         for name in files_fixed:
             path = os.path.join(args.staging, name)
             with open(path, "rb") as fh:
                 data = fh.read()
-            blob.put_blob("images/morph/" + name, data, access="public",
-                          add_random_suffix=False, allow_overwrite=True)
-            print("[BLOB] images/morph/" + name)
+            url = upload_bytes("images/morph/" + name, data)
+            print("[上传] images/morph/" + name + " -> " + url)
 
 
 if __name__ == "__main__":

@@ -472,10 +472,7 @@ def cleanup_legacy_blobs(items, workers=8):
 def upload_to_blob(items, workers=8):
     """上传到 Vercel Blob，写回 url"""
     from concurrent.futures import ThreadPoolExecutor
-    token = os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip()
-    if not token:
-        raise SystemExit("缺少 BLOB_READ_WRITE_TOKEN（检查 .env.local）")
-    from vercel.blob import sync as blob
+    from app.storage import upload_bytes
 
     done = {"n": 0}
     total = len(items)
@@ -490,8 +487,8 @@ def upload_to_blob(items, workers=8):
 
     # Blob 公开地址是确定的: {BASE}/images/morph/{文件名}。先 HEAD 抽样验证，
     # 通了就直接用，不必重传。
-    base = os.environ.get(
-        "BLOB_BASE_URL", "https://u2wff8olceezsvlg.public.blob.vercel-storage.com").strip().rstrip("/")
+    from app.storage import storage_public_base
+    base = storage_public_base()
     if todo:
         import random as _r
         import urllib.request
@@ -522,9 +519,7 @@ def upload_to_blob(items, workers=8):
         last = None
         for _ in range(3):
             try:
-                res = blob.put_blob(f"{BLOB_PREFIX}/{it['blob_name']}", data,
-                                    access="public", add_random_suffix=False, allow_overwrite=True)
-                return it, res.url
+                return it, upload_bytes(f"{BLOB_PREFIX}/{it['blob_name']}", data)
             except Exception as exc:
                 last = exc
                 time.sleep(1.5)

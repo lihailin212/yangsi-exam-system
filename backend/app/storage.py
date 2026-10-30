@@ -91,25 +91,37 @@ def blob_url_for(pathname: str) -> str:
     return f"{_BLOB_BASE_URL}/images/{name}"
 
 
+def storage_public_base() -> str:
+    """当前对象存储的公网地址前缀（导入脚本拼 URL 用）。"""
+    if supabase_enabled():
+        return _SUPABASE_PUBLIC_BASE or f"{_SUPABASE_URL}/storage/v1/object/public/{_SUPABASE_BUCKET}"
+    return _BLOB_BASE_URL
+
+
+def upload_bytes(pathname: str, data: bytes, content_type: str = "image/jpeg") -> str:
+    """上传到配置好的对象存储，返回公网可访问 URL。
+
+    Supabase Storage 优先；没有配置时回落到 Vercel Blob；两者都没有则报错。
+    导入/去水印等脚本统一走这里，不再直接依赖某个厂商 SDK。
+    """
+    if supabase_enabled():
+        return _upload_to_supabase(pathname, data, content_type)
+    if blob_enabled():
+        from vercel.blob import sync as blob
+
+        res = blob.put_blob(pathname, data, access="public", add_random_suffix=False,
+                            allow_overwrite=True)
+        return res.url
+    raise RuntimeError("没有配置对象存储（需要 SUPABASE_SERVICE_ROLE_KEY 或 BLOB_READ_WRITE_TOKEN）")
+
+
 def upload_image_bytes(data: bytes, original_filename: str = "") -> str:
     """保存图片，返回可直接访问的 URL（Blob 公网地址或本地相对路径）。"""
     ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
     filename = f"{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex}{ext}"
 
-    if supabase_enabled():
-        return _upload_to_supabase(f"images/{filename}", data, original_filename)
-
-    if blob_enabled():
-        from vercel.blob import sync as blob
-
-        result = blob.put_blob(
-            f"images/{filename}",
-            data,
-            access="public",
-            add_random_suffix=False,
-            allow_overwrite=True,
-        )
-        return result.url
+    if supabase_enabled() or blob_enabled():
+        return upload_bytes(f"images/{filename}", data)
 
     # 本地开发：落盘
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -118,15 +130,11 @@ def upload_image_bytes(data: bytes, original_filename: str = "") -> str:
     return f"/uploads/images/{filename}"
 
 
-def _upload_to_supabase(pathname: str, data: bytes, original_filename: str = "") -> str:
+def _upload_to_supabase(pathname: str, data: bytes, content_type: str = "image/jpeg") -> str:
     """上传到 Supabase Storage，返回公网可访问 URL。"""
     import urllib.request
 
-    ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
-    mime = {
-        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-        ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
-    }.get(ext, "application/octet-stream")
+    mime = content_type or "image/jpeg"
 
     endpoint = f"{_SUPABASE_URL}/storage/v1/object/{_SUPABASE_BUCKET}/{pathname.lstrip('/')}"
     req = urllib.request.Request(endpoint, data=data, method="POST")
