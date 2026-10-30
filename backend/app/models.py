@@ -51,10 +51,31 @@ class Exam(Base):
     judgment_score = Column(Integer, default=5)     # 判断题分值
     retake_limit = Column(Integer, default=0)       # 补考次数：0=不限，>0=最多考该次数
     total_score = Column(Float, default=0)           # 存储总分（创建/更新时计算）
+    random_mode = Column(Boolean, default=False)     # 每人随机卷：题数固定、题目随机
+    random_rules = Column(Text, default="[]")        # 抽题规则 JSON：[{category,type,count}]
     created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
     questions = relationship("Question", secondary=exam_question, back_populates="exams")
     records = relationship("ExamRecord", back_populates="exam")
+
+class ExamPaper(Base):
+    """考生在某场考试里抽到的题。
+
+    随机卷模式下，每个考生一轮作答对应一份卷子：题目由服务端按抽题规则随机
+    生成后落库。同一个人刷新页面、重新进入考试都拿同一份卷子（不会中途换题），
+    不同的人抽到的题不同，防止互相抄答案。
+    """
+    __tablename__ = "exam_papers"
+    id = Column(Integer, primary_key=True, index=True)
+    exam_id = Column(Integer, ForeignKey("exams.id"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    attempt_no = Column(Integer, default=1)     # 第几轮作答（补考时换一份新卷子）
+    question_ids = Column(Text, default="[]")   # JSON: [题目id...]
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("exam_id", "user_id", "attempt_no", name="uq_exam_paper"),
+    )
+
 
 class Question(Base):
     __tablename__ = "questions"

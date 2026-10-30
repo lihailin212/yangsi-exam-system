@@ -107,7 +107,10 @@ const loadData = async () => {
     for (const exam of tableData.value) {
       try {
         const detail = await getExam(exam.id)
-        const totalScore = detail.questions?.reduce((sum, q) => sum + (q.score || 10), 0) || 0
+        // 随机卷在考生拿到卷子前没有题目可列，总分直接用后端给的
+        const totalScore = detail.total_score
+          || detail.questions?.reduce((sum, q) => sum + (q.score || 10), 0)
+          || 0
         exam.total_score = totalScore
         
         const recordRes = await request.get(`/exam-records/user/${userId}/exam/${exam.id}`)

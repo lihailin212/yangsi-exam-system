@@ -14,7 +14,12 @@
             <span class="row-index" :title="`考试ID：${row.id}`">{{ (currentPage - 1) * pageSize + $index + 1 }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="title" label="考试名称" min-width="160" />
+        <el-table-column prop="title" label="考试名称" min-width="160">
+          <template #default="{ row }">
+            <span>{{ row.title }}</span>
+            <el-tag v-if="row.random_mode" size="small" type="warning" style="margin-left:6px">随机卷</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="时长" width="90">
           <template #default="{ row }">{{ row.duration }}分钟</template>
         </el-table-column>
@@ -120,7 +125,27 @@
           <div style="margin-top:8px;color:#909399;font-size:13px">设置每类题型的分值，用于计算考试总分</div>
         </el-form-item>
 
-        <el-form-item label="选择题目">
+        <el-form-item label="卷面方式">
+          <el-switch
+            v-model="form.random_mode"
+            active-text="每人随机卷"
+            inactive-text="固定卷面"
+          />
+          <span style="margin-left:12px;color:#909399;font-size:13px">
+            {{ form.random_mode
+              ? '每位考生题目随机，但题目数量按规则固定（防止考生之间对答案）'
+              : '所有考生使用同一份固定卷面' }}
+          </span>
+        </el-form-item>
+
+        <el-form-item v-if="form.random_mode" label="抽题规则">
+          <QuestionRuleEditor v-model="form.random_rules" :categories="categoryNames" />
+          <div style="color:#909399;font-size:13px;margin-top:6px">
+            每位考生进考试时按这些规则从题库随机抽题，题目数量每人相同、题目各不相同。
+          </div>
+        </el-form-item>
+
+        <el-form-item v-if="!form.random_mode" label="选择题目">
           <div style="width:100%">
             <div class="question-filter">
               <el-input v-model="qSearch" placeholder="搜索题目" style="width:180px" clearable @input="loadQuestions" />
@@ -181,23 +206,11 @@
     </el-dialog>
 
     <!-- 随机抽题弹窗 -->
-    <el-dialog v-model="randomDialogVisible" title="随机抽题" width="400px" :close-on-click-modal="false">
-      <el-form :model="randomForm" label-width="100px">
-        <el-form-item label="单选题">
-          <el-input-number v-model="randomForm.single" :min="0" :max="100" style="width:150px" />
-          <span style="margin-left:8px;color:#909399;font-size:13px">道</span>
-        </el-form-item>
-        <el-form-item label="多选题">
-          <el-input-number v-model="randomForm.multiple" :min="0" :max="100" style="width:150px" />
-          <span style="margin-left:8px;color:#909399;font-size:13px">道</span>
-        </el-form-item>
-        <el-form-item label="判断题">
-          <el-input-number v-model="randomForm.judgment" :min="0" :max="100" style="width:150px" />
-          <span style="margin-left:8px;color:#909399;font-size:13px">道</span>
-        </el-form-item>
-      </el-form>
-      <div style="color:#909399;font-size:13px;margin-top:8px">
-        系统将从题库中随机选择指定数量的题目
+    <el-dialog v-model="randomDialogVisible" title="随机抽题" width="680px" :close-on-click-modal="false">
+      <QuestionRuleEditor v-model="randomRules" :categories="categoryNames" />
+      <div style="color:#909399;font-size:13px;margin-top:10px">
+        每条规则单独抽题：可以按分类（血细胞 / 尿沉渣 / 寄生虫 / 其他体液）抽，
+        也可以按题型（单选题 / 填空题 / 多选题 / 判断题）抽，两种可以混着写。
       </div>
       <template #footer>
         <el-button @click="randomDialogVisible = false">取消</el-button>
@@ -318,6 +331,7 @@ import {
   getExams, createExam, updateExam, deleteExam, getExamRecords, exportExamExcel,
 } from '@/api/exams'
 import { getQuestions, randomQuestions, getCategories } from '@/api/questions'
+import QuestionRuleEditor from '@/components/QuestionRuleEditor.vue'
 import { getExamLoginUrl, getExamStudents, setExamStudents } from '@/api/distributions'
 import { getStudents } from '@/api/students'
 import { Monitor, Download } from '@element-plus/icons-vue'
@@ -375,11 +389,11 @@ const currentExam = ref(null)
 // 随机抽题
 const randomDialogVisible = ref(false)
 const randomLoading = ref(false)
-const randomForm = reactive({
-  single: 0,
-  multiple: 0,
-  judgment: 0
-})
+// 抽题规则：[{category: '血细胞', type: 'single', count: 10}]
+const randomRules = ref([])
+
+// 题库分类名，给规则编辑器下拉用
+const categoryNames = computed(() => categories.value.map(c => c.name))
 
 const typeTagMap = {
   single: { label: '单选', type: 'primary' },
@@ -397,6 +411,8 @@ const form = reactive({
   single_score: 10,
   multiple_score: 20,
   judgment_score: 5,
+  random_mode: false,
+  random_rules: [],
   question_ids: [],
 })
 
@@ -527,7 +543,8 @@ const openAdd = async () => {
   editingId.value = null
   Object.assign(form, {
     title: '', duration: 90, start_time: null, end_time: null, pass_score: 60,
-    retake_limit: 0, single_score: 10, multiple_score: 20, judgment_score: 5, question_ids: []
+    retake_limit: 0, single_score: 10, multiple_score: 20, judgment_score: 5,
+    random_mode: false, random_rules: [], question_ids: []
   })
   qSearch.value = ''
   qType.value = ''
@@ -557,6 +574,8 @@ const openEdit = async (row) => {
     single_score: detail.single_score || 10,
     multiple_score: detail.multiple_score || 20,
     judgment_score: detail.judgment_score || 5,
+    random_mode: !!detail.random_mode,
+    random_rules: parseRules(detail.random_rules),
     question_ids: ids,
   })
   qSearch.value = ''
@@ -588,7 +607,9 @@ const handleSave = async () => {
       single_score: form.single_score,
       multiple_score: form.multiple_score,
       judgment_score: form.judgment_score,
-      question_ids: form.question_ids,
+      random_mode: form.random_mode,
+      random_rules: form.random_mode ? form.random_rules : [],
+      question_ids: form.random_mode ? [] : form.question_ids,
     }
     if (editingId.value) {
       await updateExam(editingId.value, payload)
@@ -642,10 +663,29 @@ const handleExportRecords = async () => {
 
 // 随机抽题
 const openRandomDialog = () => {
-  randomForm.single = 0
-  randomForm.multiple = 0
-  randomForm.judgment = 0
+  // 没有规则时给一条默认规则，避免打开弹窗是空白的
+  if (!randomRules.value.length) {
+    randomRules.value = [{ category: '', type: '', count: 10 }]
+  }
   randomDialogVisible.value = true
+}
+
+// 后端存的规则是 JSON 字符串，编辑时读回数组
+const parseRules = (raw) => {
+  if (!raw) return []
+  try {
+    const list = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!Array.isArray(list)) return []
+    return list
+      .filter(r => r && r.count)
+      .map(r => ({
+        category: r.category || '',
+        type: r.type || '',
+        count: Number(r.count) || 0,
+      }))
+  } catch {
+    return []
+  }
 }
 
 // ---- 分发管理 ----
@@ -765,18 +805,14 @@ watch(qrcodeDialogVisible, (val) => {
 })
 
 const handleRandomSelect = async () => {
-  const total = randomForm.single + randomForm.multiple + randomForm.judgment
-  if (total === 0) {
-    ElMessage.warning('请至少选择一道题目')
+  const rules = (randomRules.value || []).filter(r => Number(r.count) > 0)
+  if (rules.length === 0) {
+    ElMessage.warning('请至少设置一条抽题规则')
     return
   }
   randomLoading.value = true
   try {
-    const res = await randomQuestions({
-      single: randomForm.single,
-      multiple: randomForm.multiple,
-      judgment: randomForm.judgment
-    })
+    const res = await randomQuestions({ rules })
     form.question_ids = res.question_ids
     randomIds.value = res.question_ids  // 保存 ID 集合
     randomTypes.value = (res.questions || []).map(q => q.type)

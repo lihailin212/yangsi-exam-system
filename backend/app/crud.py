@@ -8,7 +8,9 @@ from datetime import datetime, timedelta
 from typing import List
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, literal_column, or_, select, union_all
+from sqlalchemy.exc import IntegrityError
 from . import models, schemas
+from . import paper as paper_lib
 from .auth import hash_password, verify_password, invalidate_user_cache
 from .timeutil import (
     SUBMIT_GRACE_SECONDS,
@@ -265,15 +267,50 @@ def _calc_total_score(exam: models.Exam) -> float:
     }
     return sum(score_map.get(q.type, 10) for q in exam.questions)
 
-def create_exam(db: Session, exam_in: schemas.ExamCreate, creator_id: int):
-    data = exam_in.model_dump(exclude={"question_ids"})
-    exam = models.Exam(**data, created_by=creator_id)
-    if exam_in.question_ids:
-        qs = db.query(models.Question).filter(models.Question.id.in_(exam_in.question_ids)).all()
+def _apply_exam_questions(db: Session, exam, exam_in):
+    """按提交的题目/抽题规则装配考试。
+
+    普通考试：题目就是管理员勾选的那些。
+    随机卷：题目是"候选题库"（所有规则能抽到的题），
+    考生进考试时再从候选库里随机抽，题目数量按规则固定。
+    """
+    if exam_in.random_mode:
+        rules = paper_lib.parse_rules(paper_lib.rules_to_json(exam_in.random_rules))
+        if not rules:
+            raise ValueError("随机卷至少要配置一条抽题规则")
+        exam.random_mode = True
+        exam.random_rules = paper_lib.rules_to_json(exam_in.random_rules)
+        # 每条规则都要抽得出题，否则考生进考试时才发现抽不出题就晚了
+        for rule in rules:
+            pool = paper_lib.pool_questions(db, rule)
+            if len(pool) < rule["count"]:
+                raise ValueError(
+                    "规则「%s」题库不足，需要 %d 道，实际只有 %d 道" % (
+                        paper_lib.describe_rule(rule), rule["count"], len(pool)))
+        pool_ids = paper_lib.pool_ids(db, rules)
+        if not pool_ids:
+            raise ValueError("抽题规则没有匹配到任何题目")
+        exam.questions = db.query(models.Question).filter(
+            models.Question.id.in_(pool_ids)).all()
+        exam.total_score = paper_lib.estimate_total_score(db, exam, rules)
+        return rules
+
+    exam.random_mode = False
+    exam.random_rules = "[]"
+    if exam_in.question_ids is not None:
+        qs = db.query(models.Question).filter(
+            models.Question.id.in_(exam_in.question_ids)).all()
         exam.questions = qs
-    # 计算并存储总分
     exam.total_score = _calc_total_score(exam)
+    return []
+
+
+def create_exam(db: Session, exam_in: schemas.ExamCreate, creator_id: int):
+    data = exam_in.model_dump(exclude={"question_ids", "random_rules"})
+    exam = models.Exam(**data, created_by=creator_id)
     db.add(exam)
+    db.flush()
+    _apply_exam_questions(db, exam, exam_in)
     db.commit()
     db.refresh(exam)
     invalidate_exam_questions(exam.id)
@@ -283,14 +320,43 @@ def update_exam(db: Session, exam_id: int, exam_in: schemas.ExamUpdate):
     exam = db.query(models.Exam).filter(models.Exam.id == exam_id).first()
     if not exam:
         return None
-    data = exam_in.model_dump(exclude_none=True, exclude={"question_ids"})
+    data = exam_in.model_dump(exclude_none=True,
+                              exclude={"question_ids", "random_rules"})
     for k, v in data.items():
         setattr(exam, k, v)
-    if exam_in.question_ids is not None:
-        qs = db.query(models.Question).filter(models.Question.id.in_(exam_in.question_ids)).all()
-        exam.questions = qs
-    # 重新计算总分
-    exam.total_score = _calc_total_score(exam)
+    if exam_in.random_mode is not None:
+        exam.random_mode = exam_in.random_mode
+    # 随机卷的规则/题目用统一入口装配，普通考试保持原来"勾选题目"的逻辑
+    if exam.random_mode or exam_in.random_rules is not None:
+        rules_payload = exam_in.random_rules
+        if rules_payload is None and exam.random_mode:
+            # 只改了标题之类、没重传规则时，沿用原来存的规则
+            try:
+                rules_payload = json.loads(exam.random_rules or "[]")
+            except (TypeError, ValueError):
+                rules_payload = []
+        payload = schemas.ExamCreate(
+            title=exam.title,
+            duration=exam.duration,
+            start_time=exam.start_time,
+            end_time=exam.end_time,
+            pass_score=exam.pass_score,
+            single_score=exam.single_score,
+            multiple_score=exam.multiple_score,
+            judgment_score=exam.judgment_score,
+            retake_limit=exam.retake_limit,
+            random_mode=bool(exam.random_mode),
+            random_rules=rules_payload or [],
+            question_ids=exam_in.question_ids or [],
+        )
+        _apply_exam_questions(db, exam, payload)
+    else:
+        if exam_in.question_ids is not None:
+            qs = db.query(models.Question).filter(
+                models.Question.id.in_(exam_in.question_ids)).all()
+            exam.questions = qs
+        # 重新计算总分
+        exam.total_score = _calc_total_score(exam)
     db.commit()
     db.refresh(exam)
     invalidate_exam_questions(exam_id)
@@ -304,7 +370,8 @@ def delete_exam(db: Session, exam_id: int):
     invalidate_exam_questions(exam_id)
     return exam
 
-def create_record(db: Session, exam, user_id: int, answers_str: str, at=None):
+def create_record(db: Session, exam, user_id: int, answers_str: str, at=None,
+                  attempt_no=None):
     """按答案判分并生成一条交卷记录。
 
     at 是这条记录的提交时刻（UTC 无时区）。超时自动交卷时传截止时间，
@@ -326,7 +393,15 @@ def create_record(db: Session, exam, user_id: int, answers_str: str, at=None):
         "fill": exam.single_score,
     }
 
-    for qid, qtype, correct_answer in get_scoring_questions(db, exam.id):
+    # 随机卷按该考生实际抽到的卷子判分，总分也按这份卷子算
+    if getattr(exam, "random_mode", False):
+        scoring = get_paper_scoring_questions(db, exam, user_id, attempt_no)
+        total_score = sum(score_map.get(t, 10) for _, t, _ in scoring)
+    else:
+        scoring = get_scoring_questions(db, exam.id)
+        total_score = exam.total_score
+
+    for qid, qtype, correct_answer in scoring:
         question_score = score_map.get(qtype, 10)  # 默认10分
         user_ans = answers.get(str(qid), "")
         if qtype == "multiple":
@@ -345,13 +420,101 @@ def create_record(db: Session, exam, user_id: int, answers_str: str, at=None):
         user_id=user_id,
         answers=answers_str,
         score=earned_score,
-        total_score=exam.total_score,  # 使用存储的总分
+        total_score=total_score,  # 随机卷按本人卷子算，普通考试用存储的总分
     )
     if at is not None:
         record.submitted_at = at
     db.add(record)
     db.commit()
     return record
+
+
+# ---- 随机卷（每人题数相同、题目随机） ----
+
+def current_attempt_no(db: Session, exam_id: int, user_id: int) -> int:
+    """该考生当前所处的作答轮次：还没开始过就是第 1 轮。"""
+    latest = get_latest_attempt(db, exam_id, user_id)
+    return latest.attempt_no if latest else 1
+
+
+def get_or_create_paper(db: Session, exam, user_id: int, attempt_no: int):
+    """取该考生该轮抽到的题目 id 列表，没有就按规则抽一份并落库。
+
+    落库后同一个人刷新/重进都拿到同一份卷子，不同人抽到的题不同。
+    """
+    if not getattr(exam, "random_mode", False):
+        return [q.id for q in exam.questions]
+
+    paper = db.query(models.ExamPaper).filter(
+        models.ExamPaper.exam_id == exam.id,
+        models.ExamPaper.user_id == user_id,
+        models.ExamPaper.attempt_no == attempt_no,
+    ).first()
+    if paper:
+        try:
+            ids = json.loads(paper.question_ids or "[]")
+        except (TypeError, ValueError):
+            ids = []
+        if ids:
+            return ids
+
+    rules = paper_lib.parse_rules(exam.random_rules)
+    ids = paper_lib.build_paper(db, rules)
+    db.add(models.ExamPaper(
+        exam_id=exam.id,
+        user_id=user_id,
+        attempt_no=attempt_no,
+        question_ids=json.dumps(ids),
+    ))
+    try:
+        db.commit()
+    except IntegrityError:
+        # 并发进入考试时可能同时抽卷，唯一约束保证只会留下一份
+        db.rollback()
+        paper = db.query(models.ExamPaper).filter(
+            models.ExamPaper.exam_id == exam.id,
+            models.ExamPaper.user_id == user_id,
+            models.ExamPaper.attempt_no == attempt_no,
+        ).first()
+        if paper:
+            try:
+                return json.loads(paper.question_ids or "[]")
+            except (TypeError, ValueError):
+                pass
+        raise
+    return ids
+
+
+def get_paper_questions(db: Session, exam, user_id: int, attempt_no=None):
+    """按考生抽到的卷子取题目（保持抽题顺序）；普通考试就是考试本身的题目。"""
+    if not getattr(exam, "random_mode", False):
+        return list(exam.questions)
+    if attempt_no is None:
+        attempt_no = current_attempt_no(db, exam.id, user_id)
+    ids = get_or_create_paper(db, exam, user_id, attempt_no)
+    if not ids:
+        return []
+    rows = db.query(models.Question).filter(models.Question.id.in_(ids)).all()
+    by_id = {q.id: q for q in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def get_paper_scoring_questions(db: Session, exam, user_id: int, attempt_no=None):
+    """判分用：只取该考生卷子上的题号、题型、正确答案（保持卷子顺序）。"""
+    if not getattr(exam, "random_mode", False):
+        return get_scoring_questions(db, exam.id)
+    if attempt_no is None:
+        attempt_no = current_attempt_no(db, exam.id, user_id)
+    ids = get_or_create_paper(db, exam, user_id, attempt_no)
+    if not ids:
+        return []
+    rows = db.query(
+        models.Question.id,
+        models.Question.type,
+        models.Question.answer,
+    ).filter(models.Question.id.in_(ids)).all()
+    order = {qid: i for i, qid in enumerate(ids)}
+    return sorted(rows, key=lambda r: order.get(r.id, 0))
 
 
 def get_scoring_questions(db: Session, exam_id: int):
@@ -393,7 +556,8 @@ def submit_attempt(db: Session, exam, user_id: int, answers_str: str, attempt, a
     ).update({"submitted_at": ts}, synchronize_session="evaluate")
     if not changed:
         return None, False
-    return create_record(db, exam, user_id, answers_str, at=ts), True
+    return create_record(db, exam, user_id, answers_str, at=ts,
+                         attempt_no=attempt.attempt_no), True
 
 
 # ---- 考试会话（ExamAttempt） ----
@@ -1966,7 +2130,48 @@ def export_exam_excel(db: Session, exam_id: int):
         return None
 
     records = get_exam_records(db, exam_id)
-    questions = sorted(exam.questions, key=lambda q: q.id)
+    # 随机卷：每个考生抽到的题不一样，逐题明细按本人的卷子走，
+    # 统计表用所有考生卷子的并集（没抽到的题不会出现）。
+    per_user_questions = {}
+    if getattr(exam, "random_mode", False):
+        papers = db.query(models.ExamPaper).filter(
+            models.ExamPaper.exam_id == exam.id).all()
+        union_ids = []
+        seen_ids = set()
+        for p in papers:
+            try:
+                ids = json.loads(p.question_ids or "[]")
+            except (TypeError, ValueError):
+                ids = []
+            for qid in ids:
+                if qid not in seen_ids:
+                    seen_ids.add(qid)
+                    union_ids.append(qid)
+        rows = db.query(models.Question).filter(
+            models.Question.id.in_(union_ids)).all() if union_ids else []
+        by_id = {q.id: q for q in rows}
+        union_questions = [by_id[i] for i in union_ids if i in by_id]
+        for p in papers:
+            try:
+                ids = json.loads(p.question_ids or "[]")
+            except (TypeError, ValueError):
+                ids = []
+            per_user_questions[(p.user_id, p.attempt_no)] = [
+                by_id[i] for i in ids if i in by_id]
+        # 成绩 -> 对应轮次（同一考生补考时，每轮卷子不同）
+        attempts = db.query(models.ExamAttempt).filter(
+            models.ExamAttempt.exam_id == exam.id).all()
+        for rec in records:
+            cands = [a for a in attempts
+                     if a.user_id == rec.user_id and a.submitted_at is not None
+                     and a.submitted_at <= (rec.submitted_at or a.submitted_at)]
+            if cands:
+                best = max(cands, key=lambda a: a.attempt_no)
+                per_user_questions[("record", rec.id)] = per_user_questions.get(
+                    (rec.user_id, best.attempt_no), [])
+        questions = sorted(union_questions, key=lambda q: q.id)
+    else:
+        questions = sorted(exam.questions, key=lambda q: q.id)
     score_map = {
         "single": exam.single_score or 10,
         "multiple": exam.multiple_score or 20,
@@ -2044,7 +2249,12 @@ def export_exam_excel(db: Session, exam_id: int):
     write_header(ws2, 1, ["工号", "姓名", "题号", "题型", "题目内容", "正确答案", "考生答案", "是否正确", "得分"])
     row = 2
     for r, answers in parsed:
-        for idx, q in enumerate(questions, start=1):
+        # 随机卷按该考生自己那份卷子出题，普通卷用整卷题目
+        row_questions = questions
+        if per_user_questions:
+            row_questions = per_user_questions.get(
+                ("record", r.id)) or questions
+        for idx, q in enumerate(row_questions, start=1):
             user_answer = answers.get(str(q.id), answers.get(q.id, ""))
             correct = _exam_answer_correct(q, user_answer)
             content = (q.content or "").replace("<p>", "").replace("</p>", "")[:120]

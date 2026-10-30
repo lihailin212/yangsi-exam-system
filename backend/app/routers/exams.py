@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from urllib.parse import quote
 from ..database import get_db
 from .. import crud, schemas
+from .. import paper as paper_lib
 from ..auth import get_current_user, require_admin
 from ..timeutil import SUBMIT_GRACE_SECONDS, app_now, to_epoch_ms, utc_now
 
@@ -27,6 +28,7 @@ def list_exams(skip: int = 0, limit: int = 20, db: Session = Depends(get_db), _=
             "pass_score": e.pass_score,
             "total_score": e.total_score,
             "retake_limit": e.retake_limit,
+            "random_mode": bool(getattr(e, "random_mode", False)),
             "created_at": e.created_at,
             "question_count": len(e.questions),
             "participant_count": len(e.records),
@@ -51,7 +53,19 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(g
     reveal_answers = current_user.is_admin or (
         answered_count > 0 and (retake_exhausted or exam_finished)
     )
-    exam_questions = crud.get_exam_questions(exam)
+    random_mode = bool(getattr(exam, "random_mode", False))
+    if random_mode and not current_user.is_admin:
+        # 随机卷：考生只看得到自己抽到的那份卷子，
+        # 没抽过（还没开始考试）时先不给题，避免整池题目漏出去。
+        attempt_no = crud.current_attempt_no(db, exam_id, current_user.id)
+        try:
+            exam_questions = crud.get_paper_questions(
+                db, exam, current_user.id, attempt_no)
+        except paper_lib.RuleError:
+            # 规则和题库对不上时别把整个页面搞崩，提示管理员去调规则
+            exam_questions = []
+    else:
+        exam_questions = crud.get_exam_questions(exam)
     questions = []
     for q in exam_questions:
         qd = schemas.QuestionOut.model_validate(q).model_dump()
@@ -72,6 +86,8 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(g
         "judgment_score": exam.judgment_score,
         "retake_limit": exam.retake_limit,
         "total_score": exam.total_score,
+        "random_mode": random_mode,
+        "random_rules": exam.random_rules or "[]",
         "created_at": exam.created_at,
         "questions": questions,
         "question_ids": [q.id for q in exam_questions],
@@ -105,12 +121,39 @@ def start_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends
     attempt = crud.start_attempt(db, exam, current_user.id, latest=latest)
     if not attempt:
         raise HTTPException(status_code=500, detail="无法开启作答会话")
+    # 随机卷：抽题落库，并把这一轮抽到的题目一起下发，
+    # 考生刷新页面拿到的还是同一份卷子。
+    paper_ids = []
+    if getattr(exam, "random_mode", False):
+        try:
+            paper_ids = crud.get_or_create_paper(
+                db, exam, current_user.id, attempt.attempt_no)
+        except paper_lib.RuleError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     return {
         "attempt_id": attempt.id,
+        "attempt_no": attempt.attempt_no,
+        "paper_question_ids": paper_ids,
         "deadline_ms": to_epoch_ms(attempt.deadline_at),
         "server_now_ms": to_epoch_ms(utc_now()),
         "duration": exam.duration,
     }
+
+
+@router.get("/{exam_id}/preview-paper")
+def preview_paper(exam_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    """随机卷预览：按规则现抽一份样卷（不落库），方便管理员核对规则。"""
+    exam = crud.get_exam(db, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="考试不存在")
+    if not getattr(exam, "random_mode", False):
+        return {"random_mode": False, "question_ids": [q.id for q in exam.questions]}
+    rules = paper_lib.parse_rules(exam.random_rules)
+    try:
+        ids = paper_lib.build_paper(db, rules)
+    except paper_lib.RuleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"random_mode": True, "question_ids": ids}
 
 
 @router.post("/{exam_id}/draft")
@@ -147,7 +190,11 @@ def save_exam_draft(exam_id: int, payload: dict, db: Session = Depends(get_db),
 
 @router.post("", response_model=schemas.ExamOut)
 def create_exam(exam_in: schemas.ExamCreate, db: Session = Depends(get_db), current_user=Depends(require_admin)):
-    exam = crud.create_exam(db, exam_in, current_user.id)
+    try:
+        exam = crud.create_exam(db, exam_in, current_user.id)
+    except (ValueError, paper_lib.RuleError) as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
     return {
         "id": exam.id,
         "title": exam.title,
@@ -158,6 +205,9 @@ def create_exam(exam_in: schemas.ExamCreate, db: Session = Depends(get_db), curr
         "single_score": exam.single_score,
         "multiple_score": exam.multiple_score,
         "judgment_score": exam.judgment_score,
+        "random_mode": bool(exam.random_mode),
+        "random_rules": exam.random_rules or "[]",
+        "total_score": exam.total_score,
         "created_at": exam.created_at,
         "created_by": exam.created_by,
         "question_count": len(exam.questions),
@@ -166,7 +216,11 @@ def create_exam(exam_in: schemas.ExamCreate, db: Session = Depends(get_db), curr
 
 @router.put("/{exam_id}")
 def update_exam(exam_id: int, exam_in: schemas.ExamUpdate, db: Session = Depends(get_db), _=Depends(require_admin)):
-    exam = crud.update_exam(db, exam_id, exam_in)
+    try:
+        exam = crud.update_exam(db, exam_id, exam_in)
+    except (ValueError, paper_lib.RuleError) as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
     if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
     return {
@@ -179,6 +233,9 @@ def update_exam(exam_id: int, exam_in: schemas.ExamUpdate, db: Session = Depends
         "single_score": exam.single_score,
         "multiple_score": exam.multiple_score,
         "judgment_score": exam.judgment_score,
+        "random_mode": bool(exam.random_mode),
+        "random_rules": exam.random_rules or "[]",
+        "total_score": exam.total_score,
         "created_at": exam.created_at,
         "created_by": exam.created_by,
         "question_count": len(exam.questions),
