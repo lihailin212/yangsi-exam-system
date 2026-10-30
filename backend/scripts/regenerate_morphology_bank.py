@@ -382,6 +382,28 @@ def build_questions(items, seed=RANDOM_SEED):
     return questions
 
 
+def build_fill_questions(items):
+    """同一批图片再生成一套填空题：没有选项，答案是形态名称文本。"""
+    questions = []
+    for it in items:
+        answer = it["answer"]
+        content = (
+            f"<p>{STEM_BY_SUB[it['sub']].replace('请选择下图所示的', '请填写下图所示的')}：</p>"
+            f'<img style="max-width:50%" src="{it["url"]}" alt="image" />'
+        )
+        questions.append({
+            "type": "fill",
+            "content": content,
+            "options": "{}",
+            "answer": fill_answer_for(answer),
+            "analysis": "",
+            "category": CATEGORY_BY_SUB[it["sub"]],
+            "_rel": it["rel"],
+            "_answer": answer,
+        })
+    return questions
+
+
 def prepare_images(items, workers=8):
     """压缩到本地缓存目录，返回 (本地路径, blob 上传名) 列表"""
     WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -597,15 +619,16 @@ def replace_bank(engine, questions):
     print("  新题已写入")
 
 
-def create_exam(engine, title, quota, seed=RANDOM_SEED):
-    """按分类配额抽题建考试"""
+def create_exam(engine, title, quota, seed=RANDOM_SEED, qtype="single"):
+    """按分类配额抽题建考试（qtype 区分单选卷/填空卷）"""
     from sqlalchemy import text
     rng = random.Random(seed + 7)
     picked = []
     with engine.connect() as conn:
         for category, count in quota.items():
             rows = conn.execute(text(
-                "select id from questions where category = :c order by random()"), {"c": category}).fetchall()
+                "select id from questions where category = :c and type = :t order by random()"),
+                {"c": category, "t": qtype}).fetchall()
             ids = [r[0] for r in rows]
             if len(ids) < count:
                 raise SystemExit(f"{category} 只有 {len(ids)} 题，不足 {count} 题")
@@ -639,9 +662,17 @@ def verify(engine, expected_count, quota):
         for cat in sorted(quota.keys()):
             n = conn.execute(text("select count(*) from questions where category=:c"), {"c": cat}).scalar()
             print(f"    {cat}: {n} 道")
+        types = conn.execute(text(
+            "select type, count(*) from questions group by type")).fetchall()
+        print("  题型分布:", {r[0]: r[1] for r in types})
+        fill_bad = conn.execute(text(
+            "select count(*) from questions where type = 'fill' "
+            "and (answer is null or answer = '' or options <> '{}')")).scalar()
+        print(f"  填空题答案/选项异常: {fill_bad}")
         dist = conn.execute(text(
-            "select answer, count(*) from questions where category like '形态学/%' group by answer")).fetchall()
-        print("  答案分布:", {r[0]: r[1] for r in dist})
+            "select answer, count(*) from questions where category like '形态学/%' "
+            "and type = 'single' group by answer")).fetchall()
+        print("  单选答案分布:", {r[0]: r[1] for r in dist})
         exams = conn.execute(text("select id, title, duration, total_score, pass_score from exams")).fetchall()
         print("  考试:", [tuple(r) for r in exams])
         bad = conn.execute(text(
@@ -649,6 +680,38 @@ def verify(engine, expected_count, quota):
             "and (content not like '%<img%' or options is null or options = '')")).scalar()
         print(f"  缺图/缺选项的题: {bad}")
         return total, morph, others
+
+# 填空题答案的等价写法：用 | 分隔，判分时任一命中即算对。
+# 只收"确实指同一个东西"的写法，别把形态上能区分的亚型混进来。
+FILL_ALTERNATIVES = {
+    "红细胞": "正常红细胞",
+    "真菌孢子": "酵母菌",
+    "真菌菌丝": "菌丝",
+    "疟原虫环状体": "环状体",
+    "疟原虫滋养体": "滋养体",
+    "疟原虫裂殖体": "裂殖体",
+    "疟原虫配子体": "配子体",
+    "钩虫卵": "钩虫虫卵",
+    "蛔虫卵": "蛔虫虫卵",
+    "蛲虫卵": "蛲虫虫卵",
+    "鞭虫卵": "鞭虫虫卵",
+    "血吸虫卵": "血吸虫虫卵",
+    "绦虫卵": "绦虫虫卵",
+    "华支睾吸虫卵": "华支睾吸虫虫卵",
+    "腺癌细胞": "腺癌",
+    "恶性肿瘤细胞": "恶性细胞",
+    "中性粒细胞": "中性分叶核粒细胞",
+    "原始细胞": "原始粒细胞",
+    "中幼红细胞": "中幼红",
+    "晚幼红细胞": "晚幼红",
+}
+
+
+def fill_answer_for(label: str) -> str:
+    """填空题的标准答案串：规范名 | 可接受写法"""
+    alt = FILL_ALTERNATIVES.get(label)
+    return f"{label}|{alt}" if alt else label
+
 
 EXAM_TITLE = "科室形态学考核"
 EXAM_QUOTA = {
@@ -735,6 +798,8 @@ def main():
 
     print("== 6. 生成题目 ==")
     questions = build_questions(items)
+    fill_questions = build_fill_questions(items)
+    print(f"  另生成填空题 {len(fill_questions)} 道")
     print(f"  生成 {len(questions)} 道单选题")
     dist = collections.Counter(q["answer"] for q in questions)
     print(f"  答案分布 {dict(sorted(dist.items()))}")
@@ -752,10 +817,11 @@ def main():
     dump_backup(engine, backup_path)
 
     print("== 8. 写入新题库 ==")
-    replace_bank(engine, questions)
+    replace_bank(engine, questions + fill_questions)
 
     print("== 9. 创建默认考试 ==")
-    create_exam(engine, EXAM_TITLE, EXAM_QUOTA)
+    create_exam(engine, EXAM_TITLE, EXAM_QUOTA, qtype="single")
+    create_exam(engine, EXAM_TITLE + "(填空题)", EXAM_QUOTA, qtype="fill")
 
     print("== 10. 校验 ==")
     verify(engine, len(questions), EXAM_QUOTA)
@@ -765,6 +831,7 @@ def main():
         "backup": str(backup_path),
         "manifest": str(manifest_path),
         "questions": len(questions),
+        "fill_questions": len(fill_questions),
         "answer_dist": dict(dist),
         "labels": {sub: dict(counter) for sub, counter in labels.items()},
         "dedupe_log": dedupe_log,

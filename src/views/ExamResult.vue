@@ -95,6 +95,7 @@ const typeTagMap = {
   single: { label: '单选', type: 'primary' },
   multiple: { label: '多选', type: 'warning' },
   judgment: { label: '判断', type: 'success' },
+  fill: { label: '填空', type: 'info' },
 }
 
 const percent = computed(() => {
@@ -106,10 +107,21 @@ const passed = computed(() => {
   return exam.value ? percent.value >= exam.value.pass_score : false
 })
 
+// 填空题判分口径与后端一致：全角转半角、去所有空白、英文转小写
+const normalizeFill = (text) => {
+  if (!text) return ''
+  return String(text).normalize('NFKC').replace(/\s+/g, '').trim().toLowerCase()
+}
+
 const isCorrect = (q) => {
   const myAns = submittedAnswers.value[q.id] || ''
   if (q.type === 'multiple') {
     return myAns.split(',').sort().join(',') === q.answer.split(',').sort().join(',')
+  }
+  if (q.type === 'fill') {
+    const given = normalizeFill(myAns)
+    if (!given) return false
+    return String(q.answer || '').split('|').some(alt => normalizeFill(alt) === given)
   }
   return myAns === q.answer
 }

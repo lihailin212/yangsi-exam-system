@@ -17,6 +17,7 @@
           <el-option label="单选题" value="single" />
           <el-option label="多选题" value="multiple" />
           <el-option label="判断题" value="judgment" />
+          <el-option label="填空题" value="fill" />
         </el-select>
 
         <el-select v-model="filterCategory" placeholder="题目分类" clearable style="width: 200px">
@@ -394,13 +395,13 @@ const formatAnswer = (q) => {
 
 // 获取类型名称
 const getTypeName = (type) => {
-  const map = { single: '单选题', multiple: '多选题', judgment: '判断题' }
+  const map = { single: '单选题', multiple: '多选题', judgment: '判断题', fill: '填空题' }
   return map[type] || type
 }
 
 // 获取类型标签颜色
 const getTypeTag = (type) => {
-  const map = { single: '', multiple: 'warning', judgment: 'success' }
+  const map = { single: '', multiple: 'warning', judgment: 'success', fill: 'info' }
   return map[type] || ''
 }
 

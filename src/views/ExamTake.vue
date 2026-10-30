@@ -49,6 +49,18 @@
           <p class="tip">多选题，请选择所有正确答案</p>
         </div>
 
+        <!-- 填空题 -->
+        <div class="options-area" v-else-if="currentQ.type === 'fill'">
+          <el-input
+            v-model="answers[currentQ.id]"
+            type="textarea"
+            :rows="2"
+            placeholder="请填写图中所示的名称"
+            maxlength="100"
+          />
+          <p class="tip">填空题，按图中所示形态填写名称</p>
+        </div>
+
         <!-- 判断题 -->
         <div class="options-area" v-else-if="currentQ.type === 'judgment'">
           <div
@@ -230,6 +242,7 @@ const typeTagMap = {
   single: { label: '单选', type: 'primary' },
   multiple: { label: '多选', type: 'warning' },
   judgment: { label: '判断', type: 'success' },
+  fill: { label: '填空', type: 'info' },
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
