@@ -23,6 +23,19 @@
   （生产库上已与手工统计逐条对账一致）。
 - 新增 `backend/scripts/test_sqlite_flow.py`：本地 SQLite 全流程回归测试。
 
+### 增量导入形态学图片
+- 新增 `backend/scripts/import_morphology_images.py`：把 E 盘新增的图片按现有
+  题库的规矩补进题库，**不动原有的题和考试**：
+  - 扫描图片 → 文件名去掉编号得到规范答案，目录名决定分类；
+  - MD5 + dHash 两级查重（和已有题库图片比）；
+  - 压缩到最长边 1280，按 `sha1(相对路径)+sha1(文件名)` 命名存本地；
+  - 每张图出一道单选题 + 一道填空题，干扰项优先取"形态易混淆"，
+    再取同分类、最后跨分类随机；正确答案位置在 A/B/C/D 间均衡发牌；
+  - 上传 Vercel Blob，写进生产库，并把新题备份成 JSON。
+- 新增 `backend/scripts/rollback_morphology_import.py`：一键回滚某次导入。
+- 已导入：E 盘 `新增/血细胞/反应性淋巴细胞 (1~16).jpg` 共 16 张，
+  生成 32 道题（16 单选 + 16 填空），血细胞形态学单选 308→324、填空 308→324。
+
 ### 抽题规则（可按分类 / 按题型）
 - 抽题接口 `POST /api/questions/random` 支持规则式写法
   `{"rules":[{"category":"血细胞","type":"single","count":5}]}`：
