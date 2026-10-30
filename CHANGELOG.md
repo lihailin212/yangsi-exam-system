@@ -23,6 +23,13 @@
   （生产库上已与手工统计逐条对账一致）。
 - 新增 `backend/scripts/test_sqlite_flow.py`：本地 SQLite 全流程回归测试。
 
+### Vercel Blob 存储清理
+- 新增 `backend/scripts/cleanup_unused_blobs.py`：清理 Blob 里"没有任何题目引用"的图片。
+  Blob 里除了在用的形态学题库图（643 张 / 64MB），还压着今年 4 月上传的
+  547 张历史原图（未压缩，单张 3~7MB，415MB），题目里一张都没引用 ——
+  清掉后 Blob 从 479MB/1190 个文件降到 64MB/643 个文件，腾出 87% 空间。
+  删除前会逐一比对生产库题目内容，且这些文件本地都有备份。
+
 ### 增量导入形态学图片
 - 新增 `backend/scripts/import_morphology_images.py`：把 E 盘新增的图片按现有
   题库的规矩补进题库，**不动原有的题和考试**：
