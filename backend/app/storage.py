@@ -1,4 +1,4 @@
-"""统一存储层抽象：生产环境使用 Vercel Blob，本地开发使用磁盘。"""
+"""统一存储层抽象：生产环境使用 Supabase Storage（首选）或 Vercel Blob，本地开发使用磁盘。"""
 import os
 import uuid
 from datetime import datetime
@@ -7,6 +7,12 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 _BLOB_TOKEN = os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip()
+_SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+_SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+_SUPABASE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "exam-images").strip()
+_SUPABASE_PUBLIC_BASE = os.environ.get(
+    "SUPABASE_STORAGE_PUBLIC_BASE", ""
+).strip().rstrip("/")
 _BLOB_BASE_URL = os.environ.get(
     "BLOB_BASE_URL", "https://u2wff8olceezsvlg.public.blob.vercel-storage.com"
 ).strip().rstrip("/")
@@ -23,6 +29,17 @@ UPLOAD_DIR = os.path.join(BACKEND_DIR, "uploads", "images")
 
 def blob_enabled() -> bool:
     return bool(_BLOB_TOKEN)
+
+
+def supabase_enabled() -> bool:
+    """Supabase Storage 是否可用（生产环境首选）。"""
+    return bool(_SUPABASE_URL and _SUPABASE_KEY)
+
+
+def supabase_public_url(pathname: str) -> str:
+    """把 images/xxx 之类的对象路径拼成 Supabase Storage 公网地址。"""
+    base = _SUPABASE_PUBLIC_BASE or f"{_SUPABASE_URL}/storage/v1/object/public/{_SUPABASE_BUCKET}"
+    return f"{base.rstrip('/')}/{pathname.lstrip('/')}"
 
 
 def local_image_dirs() -> list:
@@ -64,8 +81,13 @@ def local_upload_dir() -> str:
 
 
 def blob_url_for(pathname: str) -> str:
-    """把 /uploads/images/xxx 之类的本地路径映射为 Blob 公网地址。"""
+    """把 /uploads/images/xxx 之类的本地路径映射为公网地址。
+
+    优先 Supabase Storage，其次 Vercel Blob。
+    """
     name = os.path.basename(pathname)
+    if supabase_enabled():
+        return supabase_public_url(f"images/{name}")
     return f"{_BLOB_BASE_URL}/images/{name}"
 
 
@@ -73,6 +95,9 @@ def upload_image_bytes(data: bytes, original_filename: str = "") -> str:
     """保存图片，返回可直接访问的 URL（Blob 公网地址或本地相对路径）。"""
     ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
     filename = f"{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex}{ext}"
+
+    if supabase_enabled():
+        return _upload_to_supabase(f"images/{filename}", data, original_filename)
 
     if blob_enabled():
         from vercel.blob import sync as blob
@@ -91,3 +116,24 @@ def upload_image_bytes(data: bytes, original_filename: str = "") -> str:
     with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
         f.write(data)
     return f"/uploads/images/{filename}"
+
+
+def _upload_to_supabase(pathname: str, data: bytes, original_filename: str = "") -> str:
+    """上传到 Supabase Storage，返回公网可访问 URL。"""
+    import urllib.request
+
+    ext = os.path.splitext(original_filename)[1].lower() or ".jpg"
+    mime = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
+    }.get(ext, "application/octet-stream")
+
+    endpoint = f"{_SUPABASE_URL}/storage/v1/object/{_SUPABASE_BUCKET}/{pathname.lstrip('/')}"
+    req = urllib.request.Request(endpoint, data=data, method="POST")
+    req.add_header("apikey", _SUPABASE_KEY)
+    req.add_header("Authorization", f"Bearer {_SUPABASE_KEY}")
+    req.add_header("Content-Type", mime)
+    req.add_header("x-upsert", "true")
+    with urllib.request.urlopen(req, timeout=60):
+        pass
+    return supabase_public_url(pathname)
