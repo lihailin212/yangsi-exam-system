@@ -138,7 +138,8 @@ async def import_questions(file: UploadFile = File(...), db: Session = Depends(g
     filename = file.filename.lower()
     questions = []
     
-    type_map_reverse = {"单选题": "single", "多选题": "multiple", "判断题": "judgment", "单选": "single", "多选": "multiple", "判断": "judgment"}
+    type_map_reverse = {"单选题": "single", "多选题": "multiple", "判断题": "judgment", "单选": "single", "多选": "multiple", "判断": "judgment",
+                       "填空题": "fill", "填空": "fill", "fill": "fill"}
 
     if filename.endswith(".xlsx") or filename.endswith(".xls"):
         import openpyxl
@@ -151,7 +152,7 @@ async def import_questions(file: UploadFile = File(...), db: Session = Depends(g
                 continue
             
             q_type_raw = str(row[0] or "single").strip()
-            q_type = type_map_reverse.get(q_type_raw, q_type_raw if q_type_raw in ("single", "multiple", "judgment") else "single")
+            q_type = type_map_reverse.get(q_type_raw, q_type_raw if q_type_raw in ("single", "multiple", "judgment", "fill") else "single")
             
             content_text = str(row[1] or "").strip()
             options_str = str(row[2] or "").strip()
@@ -190,7 +191,7 @@ async def import_questions(file: UploadFile = File(...), db: Session = Depends(g
             if len(parts) < 4:
                 continue
             q_type_raw = parts[0].strip()
-            q_type = type_map_reverse.get(q_type_raw, q_type_raw if q_type_raw in ("single", "multiple", "judgment") else "single")
+            q_type = type_map_reverse.get(q_type_raw, q_type_raw if q_type_raw in ("single", "multiple", "judgment", "fill") else "single")
             content_text = parts[1].strip()
             options_str = parts[2].strip() if len(parts) > 2 else ""
             answer = parts[3].strip() if len(parts) > 3 else ""
@@ -243,7 +244,7 @@ async def export_questions(type: str = "", search: str = "", category: str = "",
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
     
-    type_map = {"single": "单选题", "multiple": "多选题", "judgment": "判断题"}
+    type_map = {"single": "单选题", "multiple": "多选题", "judgment": "判断题", "fill": "填空题"}
     
     for row_idx, q in enumerate(items, 2):
         q_type = type_map.get(q.type, q.type)
@@ -362,7 +363,7 @@ def delete_category_endpoint(category_name: str, db: Session = Depends(get_db), 
 @router.post("/random")
 def random_questions(data: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
     """随机抽取指定数量的题目
-    请求体: {"single": 5, "multiple": 3, "judgment": 2}
+    请求体: {"single": 5, "multiple": 3, "judgment": 2, "fill": 10}
     返回: {"question_ids": [1, 2, 3, ...]}
     """
     import random
@@ -371,6 +372,7 @@ def random_questions(data: dict, db: Session = Depends(get_db), _=Depends(requir
     single_count = data.get("single", 0)
     multiple_count = data.get("multiple", 0)
     judgment_count = data.get("judgment", 0)
+    fill_count = data.get("fill", 0)
 
     result_ids = []
 
@@ -403,6 +405,16 @@ def random_questions(data: dict, db: Session = Depends(get_db), _=Depends(requir
         if len(judgment_ids) < judgment_count:
             raise HTTPException(status_code=400, detail=f"判断题数量不足，题库中只有 {len(judgment_ids)} 道判断题")
         result_ids.extend(random.sample(judgment_ids, judgment_count))
+
+    # 获取填空题
+    if fill_count > 0:
+        fill_ids = db.query(models.Question.id).filter(
+            models.Question.type == "fill"
+        ).all()
+        fill_ids = [q.id for q in fill_ids]
+        if len(fill_ids) < fill_count:
+            raise HTTPException(status_code=400, detail=f"填空题数量不足，题库中只有 {len(fill_ids)} 道填空题")
+        result_ids.extend(random.sample(fill_ids, fill_count))
 
     # 查询选中题目的详细信息（用于前端显示）
     selected_questions = db.query(models.Question.id, models.Question.type).filter(

@@ -1,5 +1,7 @@
 import json
 import random
+import re
+import unicodedata
 import string
 import time
 from datetime import datetime, timedelta
@@ -83,6 +85,34 @@ def delete_user(db: Session, user_id: int):
     return user
 
 # ---- Question ----
+def normalize_fill_text(text: str) -> str:
+    """填空题答案归一化：全角转半角、去所有空白、英文转小写。
+
+    考生写"单 核 细 胞"、"单核细胞 "、"单核细胞" 都算对；
+    全角/半角括号、英文大小写也视为同一个写法。
+    """
+    if not text:
+        return ""
+    s = unicodedata.normalize("NFKC", str(text))
+    s = re.sub(r"\s+", "", s)
+    # 去掉首尾的括号、引号和标点：考生写"（腺癌）"、"腺癌。"都算答对
+    s = s.strip("()[]{}<>\u3010\u3011\u3008\u3009\u300a\u300b\u300c\u300d\u300e\u300f"
+                "\"\u2018\u2019\u201c\u201d`\u3001\u3002\uff0c\uff0e\uff1b\uff1a\uff1f"
+                "\u00b7\u2014\u2013-_+~")
+    return s.strip().lower()
+
+
+def fill_answer_matches(given: str, standard: str) -> bool:
+    """填空题判分。标准答案可用 | 分隔多个可接受写法。"""
+    g = normalize_fill_text(given)
+    if not g:
+        return False
+    for alt in str(standard or "").split("|"):
+        if g == normalize_fill_text(alt):
+            return True
+    return False
+
+
 def get_questions(db: Session, skip=0, limit=100, q_type="", search="", category=""):
     q = db.query(models.Question)
     # 过滤掉系统分类占位题目（内容以[SYSTEM_CATEGORY]开头）
@@ -231,6 +261,7 @@ def _calc_total_score(exam: models.Exam) -> float:
         "single": exam.single_score or 10,
         "multiple": exam.multiple_score or 20,
         "judgment": exam.judgment_score or 5,
+        "fill": exam.single_score or 10,
     }
     return sum(score_map.get(q.type, 10) for q in exam.questions)
 
@@ -291,7 +322,8 @@ def create_record(db: Session, exam, user_id: int, answers_str: str, at=None):
     score_map = {
         "single": exam.single_score,
         "multiple": exam.multiple_score,
-        "judgment": exam.judgment_score
+        "judgment": exam.judgment_score,
+        "fill": exam.single_score,
     }
 
     for qid, qtype, correct_answer in get_scoring_questions(db, exam.id):
@@ -301,6 +333,9 @@ def create_record(db: Session, exam, user_id: int, answers_str: str, at=None):
             correct = set(correct_answer.split(","))
             given = set(user_ans.split(",")) if user_ans else set()
             if correct == given:
+                earned_score += question_score
+        elif qtype == "fill":
+            if fill_answer_matches(user_ans, correct_answer):
                 earned_score += question_score
         else:
             if str(user_ans).strip() == str(correct_answer).strip():
@@ -1402,6 +1437,9 @@ def _auto_judge_objective(question, given_answer: str):
         given_set = {x.strip().upper() for x in given.split(",") if x.strip()}
         return correct_set == given_set
 
+    if question.type == "fill":
+        return fill_answer_matches(given, standard)
+
     if not given:
         return False
 
@@ -1912,6 +1950,8 @@ def _exam_answer_correct(question, user_answer: str) -> bool:
     if question.type == "multiple":
         correct = {x.strip() for x in (question.answer or "").split(",") if x.strip()}
         return bool(given) and {x.strip() for x in given.split(",") if x.strip()} == correct
+    if question.type == "fill":
+        return fill_answer_matches(given, question.answer)
     return given == (question.answer or "").strip()
 
 
@@ -1932,7 +1972,7 @@ def export_exam_excel(db: Session, exam_id: int):
         "multiple": exam.multiple_score or 20,
         "judgment": exam.judgment_score or 5,
     }
-    type_label = {"single": "单选题", "multiple": "多选题", "judgment": "判断题"}
+    type_label = {"single": "单选题", "multiple": "多选题", "judgment": "判断题", "fill": "填空题"}
 
     # 解析每份答卷的作答明细
     parsed = []

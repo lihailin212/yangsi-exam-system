@@ -31,6 +31,7 @@
             <el-option label="单选题" value="single" />
             <el-option label="多选题" value="multiple" />
             <el-option label="判断题" value="judgment" />
+            <el-option label="填空题" value="fill" />
           </el-select>
         </el-col>
         <el-col :xs="16" :sm="5">
@@ -117,6 +118,7 @@
             <el-radio-button value="single">单选题</el-radio-button>
             <el-radio-button value="multiple">多选题</el-radio-button>
             <el-radio-button value="judgment">判断题</el-radio-button>
+            <el-radio-button value="fill">填空题</el-radio-button>
           </el-radio-group>
         </el-form-item>
 
@@ -140,7 +142,7 @@
         </el-form-item>
 
         <!-- 单选/多选选项 -->
-        <template v-if="form.type !== 'judgment'">
+        <template v-if="form.type === 'single' || form.type === 'multiple'">
           <el-form-item label="选项">
             <div class="options-list">
               <div v-for="key in Object.keys(form.options)" :key="key" class="option-item">
@@ -167,11 +169,17 @@
         </template>
 
         <!-- 判断题答案 -->
-        <el-form-item label="正确答案" prop="answer" v-else>
+        <el-form-item label="正确答案" prop="answer" v-else-if="form.type === 'judgment'">
           <el-radio-group v-model="form.answer">
             <el-radio value="正确">正确</el-radio>
             <el-radio value="错误">错误</el-radio>
           </el-radio-group>
+        </el-form-item>
+
+        <!-- 填空题答案 -->
+        <el-form-item label="正确答案" prop="answer" v-else>
+          <el-input v-model="form.answer" placeholder="标准答案，如：单核细胞" />
+          <div class="form-tip">多个可接受写法用 | 分隔，例如：腺癌细胞|腺癌</div>
         </el-form-item>
 
         <el-form-item label="解析">
@@ -191,7 +199,7 @@
         <p>支持格式：<strong>Excel (.xlsx)</strong>、<strong>TXT/CSV</strong></p>
         <p>Excel 表头：题型 | 题干 | 选项 | 答案 | 解析 | 分类</p>
         <p>TXT 格式（逗号分隔）：single,题目,A:选项1|B:选项2,A,解析,分类</p>
-        <p>题型值：<code>single</code>（单选）/ <code>multiple</code>（多选）/ <code>judgment</code>（判断）</p>
+        <p>题型值：<code>single</code>（单选）/ <code>multiple</code>（多选）/ <code>judgment</code>（判断）/ <code>fill</code>（填空）</p>
       </div>
       <el-upload
         ref="uploadRef"
@@ -337,6 +345,7 @@ const typeTagMap = {
   single: { label: '单选', type: 'primary' },
   multiple: { label: '多选', type: 'warning' },
   judgment: { label: '判断', type: 'success' },
+  fill: { label: '填空', type: 'info' },
 }
 
 const defaultOptions = () => ({ A: '', B: '', C: '', D: '' })
@@ -656,6 +665,9 @@ const openEdit = async (row) => {
   form.analysis = row.analysis || ''
   form.category = row.category || ''
   multipleAnswer.value = row.type === 'multiple' ? row.answer.split(',') : []
+  if (row.type === 'fill') {
+    Object.keys(form.options).forEach(key => delete form.options[key])
+  }
   loadCategories()
   dialogVisible.value = true
   await nextTick()
@@ -665,6 +677,11 @@ const openEdit = async (row) => {
 const onTypeChange = () => {
   form.answer = ''
   multipleAnswer.value = []
+  if (form.type === 'fill') {
+    // 填空题没有选项
+    Object.keys(form.options).forEach(key => delete form.options[key])
+    return
+  }
   if (form.type !== 'judgment') {
     Object.keys(form.options).forEach(key => delete form.options[key])
     form.options['A'] = ''
@@ -687,6 +704,10 @@ const removeOption = (key) => {
 const handleSave = async () => {
   console.log('handleSave called, editingId:', editingId.value)
   console.log('form.options before processing:', form.options)
+  // 填空题没有选项，提交前清空
+  if (form.type === 'fill') {
+    Object.keys(form.options).forEach(key => delete form.options[key])
+  }
   // 先处理多选题答案，再进行表单验证
   if (form.type === 'multiple') {
     if (multipleAnswer.value.length < 2) {
@@ -953,6 +974,7 @@ onMounted(() => {
 }
 .options-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .option-item { display: flex; align-items: center; gap: 8px; }
+.form-tip { font-size: 12px; color: #909399; line-height: 1.6; margin-top: 4px; }
 .option-key {
   width: 24px;
   height: 24px;
