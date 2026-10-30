@@ -7,6 +7,25 @@
 
 ## 未发布
 
+### 图片存储迁移：Vercel Blob → Supabase Storage
+- **背景**：Vercel Hobby 版 Blob 每月 `Advanced Operations` 上限 2000 次，
+  被之前的批量导入 / 清理 / 去水印重传耗尽后，Vercel 直接把这个 store 停掉了
+  （上传报 `Store is suspended`，图片地址返回 403 `Your store is blocked`），
+  整个题库的图都加载不出来。账号本身没问题（Neon 库正常、无欠费、无风控）。
+  Hobby 的 2000 次/月对"每月批量导图"的流程本来就不够用。
+- 迁移到 **Supabase Storage**（免费版 1GB 存储 / 5GB 流量，足够本项目）：
+  - 项目 `exam-system-mr`（东京区，国内延迟友好），存储桶 `exam-images`（public）；
+  - 659 张题库图（643 张在用 + 16 张新增，66MB）全部上传并逐张校验可访问；
+  - 题库里 1318 处 blob 地址 + 站点 logo 地址批量换成 Supabase 公网地址，
+    替换前已全量备份（`backend/backups/blob2supabase_urls_*.json`），可回滚；
+  - `backend/app/storage.py` 新增 Supabase 分支：**新上传的图片直接进 Supabase**，
+    以后再也不会碰到 Vercel 的月度配额；
+  - `backend/app/main.py` 的 `/uploads` 路由在启用 Supabase 时同样走重定向；
+  - 新增 `backend/scripts/upload_images_to_supabase.py`（批量上传）、
+    `backend/scripts/migrate_blob_urls_to_supabase.py`（地址迁移，带备份）；
+  - 导入 / 去水印 / 题库生成三个脚本改为走统一存储层，不再直接依赖 Vercel SDK。
+
+
 ### 题库图片去水印
 - 新增 `backend/scripts/clean_question_images.py`：自动识别并去除题库图片上的
   文字水印，处理完覆盖上传回 Vercel Blob（图片路径不变，题目里的地址不用改）。

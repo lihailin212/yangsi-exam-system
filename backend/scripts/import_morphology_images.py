@@ -163,30 +163,19 @@ def prepare_images(items):
 
 
 def upload_to_blob(items, src_root=""):
-    from vercel.blob import sync as blob
-    base = os.environ.get(
-        "BLOB_BASE_URL", "https://u2wff8olceezsvlg.public.blob.vercel-storage.com").strip().rstrip("/")
+    from app.storage import upload_bytes
+
     for it in items:
         data = open(it["local_path"], "rb").read()
         last = None
         for _ in range(3):
             try:
-                res = blob.put_blob(f"{BLOB_PREFIX}/{it['blob_name']}", data,
-                                    access="public", add_random_suffix=False, allow_overwrite=True)
-                it["url"] = res.url
+                it["url"] = upload_bytes(f"{BLOB_PREFIX}/{it['blob_name']}", data)
                 break
             except Exception as exc:
                 last = exc
                 time.sleep(1.5)
         else:
-            msg = str(last)
-            if "suspended" in msg.lower() or "blocked" in msg.lower():
-                raise SystemExit(
-                    "Vercel Blob 存储不可用（%s）。\n"
-                    "  图片已压缩到本地 %s，题目也已按规则写好地址；\n"
-                    "  等存储恢复后重跑：\n"
-                    "    python scripts/import_morphology_images.py --src \"%s\" --upload-only"
-                    % (msg, WORK_DIR, src_root))
             raise RuntimeError("上传失败 %s: %s" % (it["rel"], last))
     # 映射表一并更新，方便以后对账
     map_path = WORK_DIR / "_blob_map.json"
@@ -341,11 +330,11 @@ def main():
     if args.apply and not args.skip_upload:
         upload_to_blob(kept, args.src)
     else:
-        base = os.environ.get(
-            "BLOB_BASE_URL", "https://u2wff8olceezsvlg.public.blob.vercel-storage.com").strip().rstrip("/")
+        from app.storage import storage_public_base
+        base = storage_public_base()
         for it in kept:
             it["url"] = "%s/%s/%s" % (base, BLOB_PREFIX, it["blob_name"])
-        print("（图片未上传，地址按规则拼出：Blob 恢复后补传即可）")
+        print("（图片未上传，地址按规则拼出：存储恢复后补传即可）")
 
     from sqlalchemy import create_engine, text
     dsn = os.environ["DATABASE_URL"]
