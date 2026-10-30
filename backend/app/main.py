@@ -82,7 +82,14 @@ with engine.connect() as conn:
         conn.commit()
     except Exception:
         conn.rollback()
-    _backfill_total_score()
+
+# 随机卷：每人题数相同、题目随机
+# 这两列要在 _backfill_total_score 之前补上——那条语句会整行查 exams，
+# 模型里已经有这两列了，列不存在会直接报错。
+_add_column("ALTER TABLE exams ADD COLUMN random_mode BOOLEAN DEFAULT FALSE")
+_add_column("ALTER TABLE exams ADD COLUMN random_rules TEXT DEFAULT '[]'")
+
+_backfill_total_score()
 
 _add_column("ALTER TABLE exams ADD COLUMN retake_limit INTEGER DEFAULT 0")
 _add_column("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")

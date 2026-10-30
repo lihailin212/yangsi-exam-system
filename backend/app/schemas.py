@@ -86,6 +86,8 @@ class ExamCreate(BaseModel):
     multiple_score: int = 20    # 多选题分值
     judgment_score: int = 5     # 判断题分值
     retake_limit: int = 0       # 补考次数：0=不限，>0=最多考该次数
+    random_mode: bool = False   # 每人随机卷：题数固定、题目随机
+    random_rules: List[dict] = []  # 抽题规则：[{category,type,count}]
     question_ids: List[int] = []
 
 class ExamUpdate(BaseModel):
@@ -98,6 +100,8 @@ class ExamUpdate(BaseModel):
     multiple_score: Optional[int] = None    # 多选题分值
     judgment_score: Optional[int] = None    # 判断题分值
     retake_limit: Optional[int] = None      # 补考次数
+    random_mode: Optional[bool] = None     # 每人随机卷
+    random_rules: Optional[List[dict]] = None  # 抽题规则
     question_ids: Optional[List[int]] = None
 
 class ExamOut(BaseModel):
@@ -110,6 +114,9 @@ class ExamOut(BaseModel):
     single_score: int = 10      # 单选题分值
     multiple_score: int = 20    # 多选题分值
     judgment_score: int = 5     # 判断题分值
+    total_score: float = 0      # 总分
+    random_mode: bool = False   # 每人随机卷
+    random_rules: Optional[str] = None  # 抽题规则 JSON
     created_at: datetime
     question_count: int = 0
     participant_count: int = 0

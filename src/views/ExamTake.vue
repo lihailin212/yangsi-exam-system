@@ -345,11 +345,8 @@ const handleSubmit = async () => {
 
 onMounted(async () => {
   try {
-    const data = await getExam(examId)
-    exam.value = data
-    questions.value = data.questions || []
-    // 向服务端开启/复用作答会话，取权威的截止时间。
-    // 倒计时以服务端为准，改本机时间或清缓存都延了考试时长。
+    // 先向服务端开启/复用作答会话，取权威的截止时间。
+    // 随机卷在这一步就把这一轮要考的题目定下来，所以要先开考再取卷面。
     let serverDeadline = 0
     try {
       const start = await startExam(examId)
@@ -360,6 +357,9 @@ onMounted(async () => {
       // 开考接口失败（例如已超时）时，仍然进入页面，由服务端在提交时把关
       console.warn('start exam failed', e)
     }
+    const data = await getExam(examId)
+    exam.value = data
+    questions.value = data.questions || []
     // 恢复草稿：同一考生才复用，避免共用手机时串卷
     const draft = loadDraft()
     const currentUserId = localStorage.getItem('userId')

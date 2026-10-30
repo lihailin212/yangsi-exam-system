@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from .. import crud, schemas, models
+from .. import paper as paper_lib
 from ..auth import get_current_user, require_admin
 from ..storage import upload_image_bytes
 
@@ -362,68 +363,91 @@ def delete_category_endpoint(category_name: str, db: Session = Depends(get_db), 
 
 @router.post("/random")
 def random_questions(data: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
-    """随机抽取指定数量的题目
-    请求体: {"single": 5, "multiple": 3, "judgment": 2, "fill": 10}
-    返回: {"question_ids": [1, 2, 3, ...]}
+    """按规则随机抽题。
+
+    两种写法都能用：
+    1) 规则式（推荐）：
+       {"rules": [{"category": "血细胞", "type": "single", "count": 5},
+                  {"category": "尿沉渣", "type": "", "count": 3}]}
+       category 可以写亚类别短名（血细胞/尿沉渣/寄生虫/其他体液）、
+       完整分类名（形态学/血细胞形态学）或关键字（形态学）；
+       type 留空表示不限题型（single/multiple/judgment/fill）。
+    2) 老写法：{"single": 5, "multiple": 3, "judgment": 2, "fill": 10}
+       相当于按题型各抽若干道。
+
+    返回: {"question_ids": [...], "questions": [...], "rules": [...]}
     """
     import random
-    from sqlalchemy import func
 
-    single_count = data.get("single", 0)
-    multiple_count = data.get("multiple", 0)
-    judgment_count = data.get("judgment", 0)
-    fill_count = data.get("fill", 0)
+    rules = []
+    raw_rules = data.get("rules")
+    if isinstance(raw_rules, list) and raw_rules:
+        for item in raw_rules:
+            if not isinstance(item, dict):
+                continue
+            try:
+                count = int(item.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+            if count <= 0:
+                continue
+            category = (item.get("category") or "").strip()
+            categories = item.get("categories")
+            if not isinstance(categories, list):
+                categories = paper_lib.resolve_categories(db, category) if category else None
+            rules.append({
+                "category": category,
+                "categories": categories,
+                "type": paper_lib.normalize_type(item.get("type")),
+                "count": count,
+            })
+    else:
+        for t in ("single", "multiple", "judgment", "fill"):
+            try:
+                count = int(data.get(t) or 0)
+            except (TypeError, ValueError):
+                count = 0
+            if count > 0:
+                rules.append({"category": "", "categories": None,
+                              "type": t, "count": count})
+
+    if not rules:
+        raise HTTPException(status_code=400, detail="请至少设置一条抽题规则")
 
     result_ids = []
-
-    # 获取单选题
-    if single_count > 0:
-        single_ids = db.query(models.Question.id).filter(
-            models.Question.type == "single"
-        ).all()
-        single_ids = [q.id for q in single_ids]
-        if len(single_ids) < single_count:
-            raise HTTPException(status_code=400, detail=f"单选题数量不足，题库中只有 {len(single_ids)} 道单选题")
-        result_ids.extend(random.sample(single_ids, single_count))
-
-    # 获取多选题
-    if multiple_count > 0:
-        multiple_ids = db.query(models.Question.id).filter(
-            models.Question.type == "multiple"
-        ).all()
-        multiple_ids = [q.id for q in multiple_ids]
-        if len(multiple_ids) < multiple_count:
-            raise HTTPException(status_code=400, detail=f"多选题数量不足，题库中只有 {len(multiple_ids)} 道多选题")
-        result_ids.extend(random.sample(multiple_ids, multiple_count))
-
-    # 获取判断题
-    if judgment_count > 0:
-        judgment_ids = db.query(models.Question.id).filter(
-            models.Question.type == "judgment"
-        ).all()
-        judgment_ids = [q.id for q in judgment_ids]
-        if len(judgment_ids) < judgment_count:
-            raise HTTPException(status_code=400, detail=f"判断题数量不足，题库中只有 {len(judgment_ids)} 道判断题")
-        result_ids.extend(random.sample(judgment_ids, judgment_count))
-
-    # 获取填空题
-    if fill_count > 0:
-        fill_ids = db.query(models.Question.id).filter(
-            models.Question.type == "fill"
-        ).all()
-        fill_ids = [q.id for q in fill_ids]
-        if len(fill_ids) < fill_count:
-            raise HTTPException(status_code=400, detail=f"填空题数量不足，题库中只有 {len(fill_ids)} 道填空题")
-        result_ids.extend(random.sample(fill_ids, fill_count))
+    used = set()
+    details = []
+    for rule in rules:
+        pool = [q.id for q in paper_lib.pool_questions(db, rule) if q.id not in used]
+        if len(pool) < rule["count"]:
+            desc = rule["category"] or "全部分类"
+            if rule["type"]:
+                desc += " · " + paper_lib.TYPE_LABELS.get(rule["type"], rule["type"])
+            raise HTTPException(
+                status_code=400,
+                detail="「%s」题库不足，需要 %d 道，实际只有 %d 道" % (
+                    desc, rule["count"], len(pool)))
+        picked = random.sample(pool, rule["count"])
+        used.update(picked)
+        result_ids.extend(picked)
+        details.append({
+            "category": rule["category"],
+            "type": rule["type"],
+            "count": rule["count"],
+            "pool": len(pool),
+            "picked": picked,
+        })
 
     # 查询选中题目的详细信息（用于前端显示）
     selected_questions = db.query(models.Question.id, models.Question.type).filter(
         models.Question.id.in_(result_ids)
     ).all()
+    types = {q.id: q.type for q in selected_questions}
 
     return {
         "question_ids": result_ids,
-        "questions": [{"id": q.id, "type": q.type} for q in selected_questions]
+        "questions": [{"id": q.id, "type": types.get(q.id)} for q in selected_questions],
+        "rules": details,
     }
 
 
