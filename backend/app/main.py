@@ -144,17 +144,17 @@ app.include_router(arenas_ws.router)
 
 @app.get("/uploads/{filename:path}")
 def serve_upload(filename: str):
-    """提供 /uploads/images/xxx：先读本地磁盘，读不到再重定向到 Blob。
+    """提供 /uploads/images/xxx：先读本地磁盘，读不到再重定向到 Supabase/Blob。
 
     以前这里只会重定向到 Blob，没配 BLOB_READ_WRITE_TOKEN 时直接 404，
     于是本地库（题库里存的是 /uploads/images/xxx 相对路径）里的题图全军覆没。
     """
-    from .storage import blob_url_for, blob_enabled, find_local_image
+    from .storage import blob_url_for, blob_enabled, find_local_image, supabase_enabled
 
     path = find_local_image(filename)
     if path:
         return FileResponse(path)
-    if blob_enabled():
+    if blob_enabled() or supabase_enabled():
         return RedirectResponse(url=blob_url_for(filename), status_code=302)
     raise HTTPException(status_code=404, detail="文件不存在")
 
