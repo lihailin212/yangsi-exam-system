@@ -25,7 +25,7 @@ os.environ["DATABASE_URL"] = "sqlite:///" + DB.replace("\\", "/")
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import SessionLocal, engine
+from app.database import SessionLocal
 from app import models, crud, paper as paper_lib
 from app.auth import hash_password
 
@@ -141,21 +141,13 @@ print("   得分 %.0f / 总分 %.0f" % (rec.score, rec.total_score))
 assert rec.total_score > 0
 assert rec.score == rec.total_score, "全对应该满分"
 
-# 本地 SQLite 库跑不了取成绩的 SQL（get_exam_progress 里是 Postgres 专用的写法），
-# 涉及 HTTP 接口的第 10、11 步只在 Postgres 上跑；生产库上的验证见文档。
-IS_PG = engine.dialect.name == "postgresql"
-
 print("== 10. 考生看不到候选题库 ==")
-if not IS_PG:
-    print("   跳过（本地 SQLite 不支持该接口用到的 SQL）")
-    shutil.rmtree(TMP, ignore_errors=True)
-    print("\n本地库部分全部通过 ✅（10/11 需 Postgres）")
-    sys.exit(0)
 tok = login("tuser1", "123456")
 r = client.get("/api/exams/%d" % exam_id, headers=tok)
 assert r.status_code == 200, r.text
 qs_out = r.json()["questions"]
-print("   考生看到 %d 道（候选池 %d 道）" % (len(qs_out), r.json()["question_count"]))
+print("   考生只看到自己抽到的 %d 道（题目 id 数量一致：%d）" % (
+    len(qs_out), len(r.json()["question_ids"])))
 assert len(qs_out) == 10, "考生只应看到自己抽到的 10 道"
 
 print("== 11. 固定卷面考试不受影响 ==")

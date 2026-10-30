@@ -7,7 +7,9 @@ import time
 from datetime import datetime, timedelta
 from typing import List
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, literal_column, or_, select, union_all
+from sqlalchemy import (and_, cast, func, literal, null, or_, select,
+                      union_all)
+from sqlalchemy import Integer, Text
 from sqlalchemy.exc import IntegrityError
 from . import models, schemas
 from . import paper as paper_lib
@@ -620,17 +622,21 @@ def get_exam_progress(db: Session, exam_id: int, user_id: int):
 
     返回 (used_rounds, answered_count)。
     """
+    # UNION ALL 的两段必须列类型一致，所以空值也要显式给类型。
+    # 这里用 SQLAlchemy 的 cast(null(), ...) 而不是写死 "NULL::bigint"：
+    # 那是 Postgres 独有的写法，本地开发用的 SQLite 库会直接报语法错，
+    # 导致本地跑不了"取成绩/开考"这些接口。
     branch_records = select(
         models.ExamRecord.answers.label("answers"),
-        literal_column("0").label("kind"),
-        literal_column("NULL::bigint").label("cnt"),
+        literal(0).label("kind"),
+        cast(null(), Integer).label("cnt"),
     ).select_from(models.ExamRecord).where(
         models.ExamRecord.exam_id == exam_id,
         models.ExamRecord.user_id == user_id,
     )
     branch_closed = select(
-        literal_column("NULL::text").label("answers"),
-        literal_column("1").label("kind"),
+        cast(null(), Text).label("answers"),
+        literal(1).label("kind"),
         func.count().label("cnt"),
     ).select_from(models.ExamAttempt).where(
         models.ExamAttempt.exam_id == exam_id,

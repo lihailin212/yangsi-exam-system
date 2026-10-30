@@ -15,6 +15,14 @@
   - 两种水印都用「模板匹配定位 + 细笔画提取 + 图像修复」处理，
     修复后肉眼看不出痕迹，题目里的图片已同步更新。
 
+### 修复
+- `get_exam_progress` 里写死了 Postgres 的 `NULL::bigint` / `NULL::text`，
+  本地开发用的 SQLite 库会直接报语法错 —— 本地点「编辑考试」「开考」「交卷」
+  全是 500，本地根本跑不了完整考试流程。
+  改用 SQLAlchemy 的 `cast(null(), ...)`，两种数据库都能跑，结果不变
+  （生产库上已与手工统计逐条对账一致）。
+- 新增 `backend/scripts/test_sqlite_flow.py`：本地 SQLite 全流程回归测试。
+
 ### 抽题规则（可按分类 / 按题型）
 - 抽题接口 `POST /api/questions/random` 支持规则式写法
   `{"rules":[{"category":"血细胞","type":"single","count":5}]}`：
