@@ -155,6 +155,7 @@
               <el-input v-model="qSearch" placeholder="搜索题目" style="width:180px" clearable @input="loadQuestions" />
               <el-select v-model="qType" placeholder="题型" clearable style="width:100px" @change="loadQuestions">
                 <el-option label="单选题" value="single" />
+                <el-option label="填空题" value="fill" />
                 <el-option label="多选题" value="multiple" />
                 <el-option label="判断题" value="judgment" />
               </el-select>
@@ -174,7 +175,8 @@
             <el-table
               ref="questionTableRef"
               :data="allQuestions"
-              @selection-change="onSelectionChange"
+              @select="onTableSelect"
+              @select-all="onTableSelectAll"
               max-height="260"
               style="width:100%;margin-top:8px"
               v-loading="qLoading"
@@ -438,16 +440,13 @@ const getQuestionScore = (question) => {
   return scoreMap[question.type] || 10
 }
 
-// 已选题目类型统计（用于计算总分）
-const selectionTypes = ref([])
-const randomTypes = ref([])
-const randomIds = ref([])  // 随机选中的 ID 集合
+// 已选题目的权威状态。表格只渲染当前 200 道题，不能让它覆盖未显示部分的选中项。
+const selectedTypeById = ref({})
+const restoringSelection = ref(false)
 
-// 合并两种来源，手动勾选优先
-const selectedQuestionTypes = computed(() => {
-  if (selectionTypes.value.length > 0) return selectionTypes.value
-  return randomTypes.value
-})
+const selectedQuestionTypes = computed(() =>
+  form.question_ids.map(id => selectedTypeById.value[id]).filter(Boolean)
+)
 
 // 根据已选题目类型计算总分
 const totalScore = computed(() => {
@@ -508,6 +507,8 @@ const loadQuestions = async () => {
   try {
     const res = await getQuestions({ skip: 0, limit: 200, search: qSearch.value, type: qType.value, category: qCategory.value })
     allQuestions.value = res.items
+    await nextTick()
+    await restoreSelection()
   } finally {
     qLoading.value = false
   }
@@ -521,30 +522,53 @@ const loadCategories = async () => {
   }
 }
 
-const onSelectionChange = (rows) => {
-  // 批量恢复选中期间不更新，由 restoreSelection 统一设置
-  if (syncPending.value) return
-  form.question_ids = rows.map(r => r.id)
-  selectionTypes.value = rows.map(r => r.type)
+const onTableSelect = (selection, row) => {
+  if (restoringSelection.value) return
+  const ids = new Set(form.question_ids)
+  const types = { ...selectedTypeById.value }
+  if (selection.some(item => item.id === row.id)) {
+    ids.add(row.id)
+    types[row.id] = row.type
+  } else {
+    ids.delete(row.id)
+    delete types[row.id]
+  }
+  form.question_ids = Array.from(ids)
+  selectedTypeById.value = types
 }
 
-// 批量恢复选中期间暂停 onSelectionChange
-const syncPending = ref(false)
-
-// 恢复表格选中状态（通过 ID 匹配新数组中的行对象）
-const restoreSelection = () => {
-  if (!questionTableRef.value) return
-  const idSet = new Set(randomIds.value)
-  questionTableRef.value.clearSelection()
-  syncPending.value = true
-  allQuestions.value.forEach(q => {
-    if (idSet.has(q.id)) {
-      questionTableRef.value.toggleRowSelection(q, true)
+const onTableSelectAll = (selection) => {
+  if (restoringSelection.value) return
+  const ids = new Set(form.question_ids)
+  const types = { ...selectedTypeById.value }
+  const selectAll = selection.length > 0
+  allQuestions.value.forEach(row => {
+    if (selectAll) {
+      ids.add(row.id)
+      types[row.id] = row.type
+    } else {
+      ids.delete(row.id)
+      delete types[row.id]
     }
   })
-  // 恢复完成后一次性设置，不要依赖事件的累积
-  form.question_ids = randomIds.value
-  syncPending.value = false
+  form.question_ids = Array.from(ids)
+  selectedTypeById.value = types
+}
+
+// 恢复表格当前页的勾选状态，保留其他页/筛选条件下已选的题目。
+const restoreSelection = async () => {
+  if (!questionTableRef.value) return
+  restoringSelection.value = true
+  try {
+    const idSet = new Set(form.question_ids)
+    questionTableRef.value.clearSelection()
+    allQuestions.value.forEach(q => {
+      if (idSet.has(q.id)) questionTableRef.value.toggleRowSelection(q, true)
+    })
+    await nextTick()
+  } finally {
+    restoringSelection.value = false
+  }
 }
 
 const openAdd = async () => {
@@ -557,14 +581,12 @@ const openAdd = async () => {
   qSearch.value = ''
   qType.value = ''
   qCategory.value = ''
-  selectionTypes.value = []
-  randomTypes.value = []
-  randomIds.value = []
+  selectedTypeById.value = {}
   dialogVisible.value = true
   await nextTick()
   if (questionTableRef.value) questionTableRef.value.clearSelection()
   loadCategories()
-  loadQuestions()
+  await loadQuestions()
 }
 
 const openEdit = async (row) => {
@@ -590,16 +612,18 @@ const openEdit = async (row) => {
   qSearch.value = ''
   qType.value = ''
   qCategory.value = ''
-  selectionTypes.value = []
-  randomTypes.value = []
-  randomIds.value = ids  // 从后端获取的 ID 集合
+  selectedTypeById.value = Object.fromEntries(
+    (detail.questions || []).map(q => [q.id, q.type])
+  )
   dialogVisible.value = true
   await nextTick()
   if (questionTableRef.value) questionTableRef.value.clearSelection()
   loadCategories()
   await loadQuestions()
-  await nextTick()
-  restoreSelection()
+}
+
+const scoreOrDefault = (value, fallback) => {
+  return value === null || value === undefined || value === '' ? fallback : Number(value)
 }
 
 const handleSave = async () => {
@@ -613,10 +637,10 @@ const handleSave = async () => {
       end_time: form.end_time,
       pass_score: form.pass_score,
       retake_limit: form.retake_limit,
-      single_score: form.single_score,
-      fill_score: form.fill_score,
-      multiple_score: form.multiple_score,
-      judgment_score: form.judgment_score,
+      single_score: scoreOrDefault(form.single_score, 10),
+      fill_score: scoreOrDefault(form.fill_score, 10),
+      multiple_score: scoreOrDefault(form.multiple_score, 20),
+      judgment_score: scoreOrDefault(form.judgment_score, 5),
       random_mode: form.random_mode,
       random_rules: form.random_mode ? form.random_rules : [],
       question_ids: form.random_mode ? [] : form.question_ids,
@@ -823,16 +847,14 @@ const handleRandomSelect = async () => {
   randomLoading.value = true
   try {
     const res = await randomQuestions({ rules })
-    form.question_ids = res.question_ids
-    randomIds.value = res.question_ids  // 保存 ID 集合
-    randomTypes.value = (res.questions || []).map(q => q.type)
-    selectionTypes.value = []  // 清除手动选择，手动勾选时会覆盖
+    form.question_ids = [...(res.question_ids || [])]
+    selectedTypeById.value = Object.fromEntries(
+      (res.questions || []).map(q => [q.id, q.type])
+    )
     randomDialogVisible.value = false
-    ElMessage.success(`成功随机抽取 ${res.question_ids.length} 道题目`)
-    // 刷新表格并恢复选中状态
+    ElMessage.success(`成功随机抽取 ${form.question_ids.length} 道题目`)
+    // 刷新表格并恢复当前页能看到的选择状态，未加载的题目仍保留在已选集合中。
     await loadQuestions()
-    await nextTick()
-    restoreSelection()
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || '抽题失败，请检查题库题目数量是否足够')
   } finally {
