@@ -3,14 +3,14 @@
 ## 仓库信息
 
 - 远程仓库：`https://github.com/lihailin212/yangsi-exam-system`
-- 当前版本：**V1.0**（tag `V1.0`）
+- 当前版本：**V1.1**（tag `V1.1`）
 - 主分支：`master`
 
 ## 版本号从哪看
 
 | 位置 | 内容 |
 |---|---|
-| `src/version.js` | 前端版本号常量（侧边栏底部会显示"版本 V1.0"） |
+| `src/version.js` | 前端版本号常量（侧边栏底部会显示"版本 V1.1"） |
 | `backend/app/config.py` | 后端 `APP_VERSION`，可用环境变量覆盖 |
 | `GET /api/version` | 查当前运行的是哪一版 |
 | `CHANGELOG.md` | 每个版本改了什么 |
@@ -40,8 +40,8 @@ git push origin V1.1
 
 ```bash
 git tag                 # 所有版本
-git log --oneline V1.0  # V1.0 之后的提交
-git show V1.0           # V1.0 这个版本的内容
+git log --oneline V1.1  # V1.1 之后的提交
+git show V1.1           # V1.1 这个版本的内容
 git diff V1.0 V1.1      # 两个版本之间的差异
 ```
 

@@ -9,4 +9,4 @@ FRONTEND_BASE_URL = os.environ.get(
 )
 
 # 应用版本号。与前端 src/version.js 保持一致，发版时一起改。
-APP_VERSION = os.environ.get("APP_VERSION", "V1.0")
+APP_VERSION = os.environ.get("APP_VERSION", "V1.1")
