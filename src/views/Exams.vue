@@ -429,16 +429,26 @@ const formRules = {
   duration: [{ required: true, message: '请设置考试时长' }],
 }
 
-// 获取题目分值（根据考试设置）
-const getQuestionScore = (question) => {
-  const scoreMap = {
+// 各题型的默认分值。输入框被清空时前端显示、保存都用这套默认值，
+// 不会出现"界面一个样、保存出去是另一个样"。
+const scoreOrDefault = (value, fallback) => {
+  return value === null || value === undefined || value === '' ? fallback : Number(value)
+}
+
+const DEFAULT_SCORES = { single: 10, fill: 10, multiple: 20, judgment: 5 }
+
+const scoreOf = (type) => {
+  const raw = {
     single: form.single_score,
     fill: form.fill_score,
     multiple: form.multiple_score,
     judgment: form.judgment_score,
-  }
-  return scoreMap[question.type] || 10
+  }[type]
+  return scoreOrDefault(raw, DEFAULT_SCORES[type] ?? 10)
 }
+
+// 获取题目分值（根据考试设置）
+const getQuestionScore = (question) => scoreOf(question.type)
 
 // 已选题目的权威状态。表格只渲染当前 200 道题，不能让它覆盖未显示部分的选中项。
 const selectedTypeById = ref({})
@@ -449,15 +459,9 @@ const selectedQuestionTypes = computed(() =>
 )
 
 // 根据已选题目类型计算总分
-const totalScore = computed(() => {
-  const scoreMap = {
-    single: form.single_score,
-    fill: form.fill_score,
-    multiple: form.multiple_score,
-    judgment: form.judgment_score,
-  }
-  return selectedQuestionTypes.value.reduce((sum, type) => sum + (scoreMap[type] || 10), 0)
-})
+const totalScore = computed(() =>
+  selectedQuestionTypes.value.reduce((sum, type) => sum + scoreOf(type), 0)
+)
 
 const stripHtml = (html) => {
   const div = document.createElement('div')
@@ -541,9 +545,11 @@ const onTableSelectAll = (selection) => {
   if (restoringSelection.value) return
   const ids = new Set(form.question_ids)
   const types = { ...selectedTypeById.value }
-  const selectAll = selection.length > 0
+  // 只同步当前页可见的行；selection 里可能还带着其它页保留的选中项，
+  // 不能拿它整体判断"全选/全不选"。
+  const selectedVisible = new Set(selection.map(r => r.id))
   allQuestions.value.forEach(row => {
-    if (selectAll) {
+    if (selectedVisible.has(row.id)) {
       ids.add(row.id)
       types[row.id] = row.type
     } else {
@@ -622,10 +628,6 @@ const openEdit = async (row) => {
   await loadQuestions()
 }
 
-const scoreOrDefault = (value, fallback) => {
-  return value === null || value === undefined || value === '' ? fallback : Number(value)
-}
-
 const handleSave = async () => {
   await formRef.value.validate()
   saving.value = true
@@ -637,10 +639,10 @@ const handleSave = async () => {
       end_time: form.end_time,
       pass_score: form.pass_score,
       retake_limit: form.retake_limit,
-      single_score: scoreOrDefault(form.single_score, 10),
-      fill_score: scoreOrDefault(form.fill_score, 10),
-      multiple_score: scoreOrDefault(form.multiple_score, 20),
-      judgment_score: scoreOrDefault(form.judgment_score, 5),
+      single_score: scoreOrDefault(form.single_score, DEFAULT_SCORES.single),
+      fill_score: scoreOrDefault(form.fill_score, DEFAULT_SCORES.fill),
+      multiple_score: scoreOrDefault(form.multiple_score, DEFAULT_SCORES.multiple),
+      judgment_score: scoreOrDefault(form.judgment_score, DEFAULT_SCORES.judgment),
       random_mode: form.random_mode,
       random_rules: form.random_mode ? form.random_rules : [],
       question_ids: form.random_mode ? [] : form.question_ids,

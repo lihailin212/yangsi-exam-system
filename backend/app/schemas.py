@@ -91,6 +91,21 @@ class ExamCreate(BaseModel):
     random_rules: List[dict] = []  # 抽题规则：[{category,type,count}]
     question_ids: List[int] = []
 
+    @field_validator(
+        "single_score", "fill_score", "multiple_score", "judgment_score",
+        mode="before",
+    )
+    @classmethod
+    def _score_not_null(cls, v, info):
+        # 管理端把分值输入框清空时会传 null，这里兜底成默认分值，
+        # 免得整个考试保存失败。
+        if v is None or v == "":
+            return {
+                "single_score": 10, "fill_score": 10,
+                "multiple_score": 20, "judgment_score": 5,
+            }.get(info.field_name, 10)
+        return v
+
 class ExamUpdate(BaseModel):
     title: Optional[str] = None
     duration: Optional[int] = None
