@@ -47,6 +47,7 @@ class Exam(Base):
     end_time = Column(DateTime, nullable=True)
     pass_score = Column(Integer, default=60)
     single_score = Column(Integer, default=10)      # 单选题分值
+    fill_score = Column(Integer, default=10)        # 填空题分值
     multiple_score = Column(Integer, default=20)    # 多选题分值
     judgment_score = Column(Integer, default=5)     # 判断题分值
     retake_limit = Column(Integer, default=0)       # 补考次数：0=不限，>0=最多考该次数

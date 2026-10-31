@@ -108,10 +108,14 @@
         </el-form-item>
 
         <el-form-item label="题型分值">
-          <div style="display: flex; gap: 16px; align-items: center;">
+          <div style="display: flex; gap: 12px 16px; align-items: center; flex-wrap: wrap;">
             <div>
               <span style="margin-right:8px;font-size:13px;color:#606266">单选题</span>
               <el-input-number v-model="form.single_score" :min="1" :max="100" />
+            </div>
+            <div>
+              <span style="margin-right:8px;font-size:13px;color:#606266">填空题</span>
+              <el-input-number v-model="form.fill_score" :min="1" :max="100" />
             </div>
             <div>
               <span style="margin-right:8px;font-size:13px;color:#606266">多选题</span>
@@ -399,6 +403,7 @@ const typeTagMap = {
   single: { label: '单选', type: 'primary' },
   multiple: { label: '多选', type: 'warning' },
   judgment: { label: '判断', type: 'success' },
+  fill: { label: '填空', type: 'info' },
 }
 
 const form = reactive({
@@ -409,6 +414,7 @@ const form = reactive({
   pass_score: 60,
   retake_limit: 0,
   single_score: 10,
+  fill_score: 10,
   multiple_score: 20,
   judgment_score: 5,
   random_mode: false,
@@ -425,6 +431,7 @@ const formRules = {
 const getQuestionScore = (question) => {
   const scoreMap = {
     single: form.single_score,
+    fill: form.fill_score,
     multiple: form.multiple_score,
     judgment: form.judgment_score,
   }
@@ -446,6 +453,7 @@ const selectedQuestionTypes = computed(() => {
 const totalScore = computed(() => {
   const scoreMap = {
     single: form.single_score,
+    fill: form.fill_score,
     multiple: form.multiple_score,
     judgment: form.judgment_score,
   }
@@ -543,7 +551,7 @@ const openAdd = async () => {
   editingId.value = null
   Object.assign(form, {
     title: '', duration: 90, start_time: null, end_time: null, pass_score: 60,
-    retake_limit: 0, single_score: 10, multiple_score: 20, judgment_score: 5,
+    retake_limit: 0, single_score: 10, fill_score: 10, multiple_score: 20, judgment_score: 5,
     random_mode: false, random_rules: [], question_ids: []
   })
   qSearch.value = ''
@@ -572,6 +580,7 @@ const openEdit = async (row) => {
     pass_score: detail.pass_score,
     retake_limit: detail.retake_limit || 0,
     single_score: detail.single_score || 10,
+    fill_score: detail.fill_score || 10,
     multiple_score: detail.multiple_score || 20,
     judgment_score: detail.judgment_score || 5,
     random_mode: !!detail.random_mode,
@@ -605,6 +614,7 @@ const handleSave = async () => {
       pass_score: form.pass_score,
       retake_limit: form.retake_limit,
       single_score: form.single_score,
+      fill_score: form.fill_score,
       multiple_score: form.multiple_score,
       judgment_score: form.judgment_score,
       random_mode: form.random_mode,
