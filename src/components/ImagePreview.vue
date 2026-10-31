@@ -15,15 +15,22 @@
             <el-button @click="zoomOut" title="缩小">－</el-button>
             <el-button @click="zoomIn" title="放大">＋</el-button>
           </el-button-group>
-          <el-button size="small" @click="fit">适应窗口</el-button>
-          <el-button size="small" @click="actualSize">原始大小</el-button>
+          <el-button size="small" class="img-preview__desktop" @click="fit">适应窗口</el-button>
+          <el-button size="small" class="img-preview__desktop" @click="actualSize">原始大小</el-button>
           <el-button size="small" @click="reset">还原</el-button>
           <el-button size="small" type="primary" @click="close">关闭</el-button>
         </div>
         <span class="img-preview__scale">{{ Math.round(scale * 100) }}%</span>
       </div>
 
-      <div class="img-preview__stage" ref="stageEl">
+      <div
+        class="img-preview__stage"
+        ref="stageEl"
+        @touchstart="onTouchStart"
+        @touchmove.prevent="onTouchMove"
+        @touchend="onTouchEnd"
+        @touchcancel="onTouchEnd"
+      >
         <img
           v-if="src"
           ref="imgEl"
@@ -37,7 +44,7 @@
         <div class="img-preview__loading" v-else>没有图片</div>
       </div>
 
-      <div class="img-preview__hint">滚轮缩放 · 按住拖动平移 · 双击还原 · Esc 关闭</div>
+      <div class="img-preview__hint">双指/滚轮缩放 · 拖动平移 · 双击还原 · Esc 关闭</div>
     </div>
   </teleport>
 </template>
@@ -144,6 +151,53 @@ function onMouseDown(e) {
   document.addEventListener('mouseup', onUp)
 }
 
+let touchStartDistance = 0
+let touchStartScale = 1
+let lastTouchX = 0
+let lastTouchY = 0
+
+function getTouchDistance(touches) {
+  const dx = touches[0].clientX - touches[1].clientX
+  const dy = touches[0].clientY - touches[1].clientY
+  return Math.hypot(dx, dy)
+}
+
+function onTouchStart(e) {
+  if (e.touches.length === 1) {
+    dragging.value = true
+    lastTouchX = e.touches[0].clientX
+    lastTouchY = e.touches[0].clientY
+  } else if (e.touches.length === 2) {
+    dragging.value = false
+    touchStartDistance = getTouchDistance(e.touches)
+    touchStartScale = scale.value
+  }
+}
+
+function onTouchMove(e) {
+  if (e.touches.length === 1) {
+    const touch = e.touches[0]
+    offsetX.value += touch.clientX - lastTouchX
+    offsetY.value += touch.clientY - lastTouchY
+    lastTouchX = touch.clientX
+    lastTouchY = touch.clientY
+  } else if (e.touches.length === 2 && touchStartDistance > 0) {
+    scale.value = clamp(touchStartScale * getTouchDistance(e.touches) / touchStartDistance)
+  }
+}
+
+function onTouchEnd(e) {
+  if (e.touches.length === 0) {
+    dragging.value = false
+    touchStartDistance = 0
+  } else if (e.touches.length === 1) {
+    dragging.value = true
+    lastTouchX = e.touches[0].clientX
+    lastTouchY = e.touches[0].clientY
+    touchStartDistance = 0
+  }
+}
+
 function close() {
   emit('update:modelValue', false)
 }
@@ -225,6 +279,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   cursor: grab;
+  touch-action: none;
 }
 
 .img-preview__img {
@@ -250,5 +305,37 @@ onUnmounted(() => {
   font-size: 12px;
   text-align: center;
   flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .img-preview__bar {
+    gap: 6px;
+    padding: 8px 10px;
+    flex-wrap: wrap;
+  }
+
+  .img-preview__title {
+    max-width: 120px;
+    font-size: 12px;
+  }
+
+  .img-preview__actions {
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  .img-preview__actions :deep(.el-button) {
+    padding: 7px 9px;
+  }
+
+  .img-preview__desktop,
+  .img-preview__scale {
+    display: none;
+  }
+
+  .img-preview__hint {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
 }
 </style>
