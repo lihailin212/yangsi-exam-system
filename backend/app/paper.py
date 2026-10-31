@@ -208,7 +208,7 @@ def score_map(exam):
         "single": exam.single_score or 10,
         "multiple": exam.multiple_score or 20,
         "judgment": exam.judgment_score or 5,
-        "fill": exam.single_score or 10,
+        "fill": exam.fill_score or 10,
     }
 
 

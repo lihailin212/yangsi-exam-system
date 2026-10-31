@@ -83,6 +83,7 @@ class ExamCreate(BaseModel):
     end_time: Optional[datetime] = None
     pass_score: int = 60
     single_score: int = 10      # 单选题分值
+    fill_score: int = 10        # 填空题分值
     multiple_score: int = 20    # 多选题分值
     judgment_score: int = 5     # 判断题分值
     retake_limit: int = 0       # 补考次数：0=不限，>0=最多考该次数
@@ -97,6 +98,7 @@ class ExamUpdate(BaseModel):
     end_time: Optional[datetime] = None
     pass_score: Optional[int] = None
     single_score: Optional[int] = None      # 单选题分值
+    fill_score: Optional[int] = None        # 填空题分值
     multiple_score: Optional[int] = None    # 多选题分值
     judgment_score: Optional[int] = None    # 判断题分值
     retake_limit: Optional[int] = None      # 补考次数
@@ -112,6 +114,7 @@ class ExamOut(BaseModel):
     end_time: Optional[datetime]
     pass_score: int
     single_score: int = 10      # 单选题分值
+    fill_score: int = 10        # 填空题分值
     multiple_score: int = 20    # 多选题分值
     judgment_score: int = 5     # 判断题分值
     total_score: float = 0      # 总分

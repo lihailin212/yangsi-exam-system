@@ -265,7 +265,7 @@ def _calc_total_score(exam: models.Exam) -> float:
         "single": exam.single_score or 10,
         "multiple": exam.multiple_score or 20,
         "judgment": exam.judgment_score or 5,
-        "fill": exam.single_score or 10,
+        "fill": exam.fill_score or 10,
     }
     return sum(score_map.get(q.type, 10) for q in exam.questions)
 
@@ -344,6 +344,7 @@ def update_exam(db: Session, exam_id: int, exam_in: schemas.ExamUpdate):
             end_time=exam.end_time,
             pass_score=exam.pass_score,
             single_score=exam.single_score,
+            fill_score=exam.fill_score,
             multiple_score=exam.multiple_score,
             judgment_score=exam.judgment_score,
             retake_limit=exam.retake_limit,
@@ -392,7 +393,7 @@ def create_record(db: Session, exam, user_id: int, answers_str: str, at=None,
         "single": exam.single_score,
         "multiple": exam.multiple_score,
         "judgment": exam.judgment_score,
-        "fill": exam.single_score,
+        "fill": exam.fill_score,
     }
 
     # 随机卷按该考生实际抽到的卷子判分，总分也按这份卷子算
@@ -2234,6 +2235,7 @@ def export_exam_excel(db: Session, exam_id: int):
         "single": exam.single_score or 10,
         "multiple": exam.multiple_score or 20,
         "judgment": exam.judgment_score or 5,
+        "fill": exam.fill_score or 10,
     }
     type_label = {"single": "单选题", "multiple": "多选题", "judgment": "判断题", "fill": "填空题"}
 

@@ -19,9 +19,14 @@ def _backfill_total_score():
     db = SessionLocal()
     try:
         from . import crud as _crud, models as _models
+        from . import paper as _paper
         all_exams = db.query(_models.Exam).all()
         for exam in all_exams:
-            exam.total_score = _crud._calc_total_score(exam)
+            if getattr(exam, "random_mode", False):
+                rules = _paper.parse_rules(exam.random_rules)
+                exam.total_score = _paper.estimate_total_score(db, exam, rules)
+            else:
+                exam.total_score = _crud._calc_total_score(exam)
         db.commit()
     finally:
         db.close()
@@ -88,6 +93,18 @@ with engine.connect() as conn:
 # 模型里已经有这两列了，列不存在会直接报错。
 _add_column("ALTER TABLE exams ADD COLUMN random_mode BOOLEAN DEFAULT FALSE")
 _add_column("ALTER TABLE exams ADD COLUMN random_rules TEXT DEFAULT '[]'")
+# 填空题以前借用 single_score，新增独立分值列时按原单选分值回填，
+# 保证已有考试的历史计分口径不变。
+_add_column("ALTER TABLE exams ADD COLUMN fill_score INTEGER")
+with engine.connect() as conn:
+    try:
+        conn.execute(text(
+            "UPDATE exams SET fill_score = COALESCE(single_score, 10) "
+            "WHERE fill_score IS NULL"
+        ))
+        conn.commit()
+    except Exception:
+        conn.rollback()
 
 _backfill_total_score()
 
@@ -279,6 +296,7 @@ def _create_sample_data(db, crud, schemas, creator_id: int):
         end_time=now + timedelta(days=7),
         pass_score=60,
         single_score=10,
+        fill_score=10,
         multiple_score=20,
         judgment_score=5,
         retake_limit=3,

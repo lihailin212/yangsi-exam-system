@@ -44,6 +44,7 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(g
         "single": exam.single_score,
         "multiple": exam.multiple_score,
         "judgment": exam.judgment_score,
+        "fill": exam.fill_score,
     }
     # 只有管理员，或已交卷且无法再重考的考生，才能看到正确答案与解析，
     # 避免考生通过浏览器开发者工具直接读取答案。
@@ -82,6 +83,7 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(g
         "end_time": exam.end_time,
         "pass_score": exam.pass_score,
         "single_score": exam.single_score,
+        "fill_score": exam.fill_score,
         "multiple_score": exam.multiple_score,
         "judgment_score": exam.judgment_score,
         "retake_limit": exam.retake_limit,
@@ -203,6 +205,7 @@ def create_exam(exam_in: schemas.ExamCreate, db: Session = Depends(get_db), curr
         "end_time": exam.end_time,
         "pass_score": exam.pass_score,
         "single_score": exam.single_score,
+        "fill_score": exam.fill_score,
         "multiple_score": exam.multiple_score,
         "judgment_score": exam.judgment_score,
         "random_mode": bool(exam.random_mode),
@@ -231,6 +234,7 @@ def update_exam(exam_id: int, exam_in: schemas.ExamUpdate, db: Session = Depends
         "end_time": exam.end_time,
         "pass_score": exam.pass_score,
         "single_score": exam.single_score,
+        "fill_score": exam.fill_score,
         "multiple_score": exam.multiple_score,
         "judgment_score": exam.judgment_score,
         "random_mode": bool(exam.random_mode),
@@ -383,7 +387,7 @@ def get_record_review(record_id: int, db: Session = Depends(get_db), current_use
         "single": exam.single_score or 10,
         "multiple": exam.multiple_score or 20,
         "judgment": exam.judgment_score or 5,
-        "fill": exam.single_score or 10,
+        "fill": exam.fill_score or 10,
     }
     questions = []
     for q in crud.get_record_questions(db, record):
