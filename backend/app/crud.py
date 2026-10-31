@@ -2178,6 +2178,61 @@ def _exam_answer_correct(question, user_answer: str) -> bool:
     return given == (question.answer or "").strip()
 
 
+def _export_plain_text(html: str, limit: int = 500) -> str:
+    """把题目 HTML 转成 Excel 里能看的纯文本。
+
+    图片题不能把 <img> 标签塞进单元格，导出来是一堆乱码；
+    这里把标签剥掉，并把图片换成 "[图片]" 标记，
+    同时保留图片链接，方便老师回溯原题。
+    """
+    text = html or ""
+    # 图片先换成占位，后面再把链接附在末尾
+    img_links = []
+
+    def _img_sub(m):
+        src = re.search(r'src="([^"]+)"', m.group(0))
+        alt = re.search(r'alt="([^"]*)"', m.group(0))
+        label = (alt.group(1).strip() if alt else "") or "图片"
+        if src:
+            img_links.append(src.group(1))
+        return "[%s]" % label
+
+    text = re.sub(r"<img[^>]*>", _img_sub, text, flags=re.I)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</p\s*>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = (text.replace("&nbsp;", " ").replace("&amp;", "&")
+                .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
+    text = re.sub(r"\n{2,}", "\n", text).strip()
+    if img_links:
+        text = text + "\n图片链接：" + " ; ".join(dict.fromkeys(img_links))
+    if limit and len(text) > limit:
+        text = text[:limit] + "…"
+    return text
+
+
+def _export_answer_text(question, answer: str) -> str:
+    """把答案显示成人能看懂的形式。
+
+    选择题原本只导出 "B"，看不出选的是什么；
+    这里显示成 "B. 血小板" 这样的形式，多选用顿号分隔。
+    """
+    raw = (answer or "").strip()
+    if not raw:
+        return ""
+    if question.type == "multiple":
+        parts = [x.strip() for x in raw.split(",") if x.strip()]
+        return "、".join(
+            "%s. %s" % (p, _resolve_option_text(question, p)) if _resolve_option_text(question, p) != p
+            else p for p in parts)
+    if question.type in ("single", "judgment"):
+        text = _resolve_option_text(question, raw)
+        if text == raw:
+            return raw
+        return "%s. %s" % (raw, text)
+    return raw
+
+
 def export_exam_excel(db: Session, exam_id: int):
     """导出普通考试成绩 Excel（总成绩表 / 答题明细 / 统计表）"""
     from openpyxl import Workbook
@@ -2305,8 +2360,11 @@ def export_exam_excel(db: Session, exam_id: int):
     autosize(ws1, [8, 12, 12, 16, 10, 10, 10, 12, 22])
 
     # ===== Sheet2: 答题明细 =====
+    # 每行 = 某位考生的某道题：题号、题目、正确答案、考生答案都在这一行里，
+    # 方便直接对着卷子核对。
     ws2 = wb.create_sheet("答题明细")
-    write_header(ws2, 1, ["工号", "姓名", "题号", "题型", "题目内容", "正确答案", "考生答案", "是否正确", "得分"])
+    write_header(ws2, 1, ["工号", "姓名", "题号", "题目ID", "题型", "题目内容",
+                          "正确答案", "考生答案", "是否正确", "得分"])
     row = 2
     for r, answers in parsed:
         # 随机卷按该考生自己那份卷子出题，普通卷用整卷题目
@@ -2316,19 +2374,26 @@ def export_exam_excel(db: Session, exam_id: int):
                 ("record", r.id)) or questions
         for idx, q in enumerate(row_questions, start=1):
             user_answer = answers.get(str(q.id), answers.get(q.id, ""))
+            if not isinstance(user_answer, str):
+                user_answer = "" if user_answer is None else str(user_answer)
             correct = _exam_answer_correct(q, user_answer)
-            content = (q.content or "").replace("<p>", "").replace("</p>", "")[:120]
+            content = _export_plain_text(q.content)
             ws2.cell(row=row, column=1, value=r.user.employee_id if r.user else "")
             ws2.cell(row=row, column=2, value=r.user.name if r.user else "")
             ws2.cell(row=row, column=3, value=idx)
-            ws2.cell(row=row, column=4, value=type_label.get(q.type, q.type))
-            ws2.cell(row=row, column=5, value=content)
-            ws2.cell(row=row, column=6, value=q.answer or "")
-            ws2.cell(row=row, column=7, value=user_answer or "")
-            ws2.cell(row=row, column=8, value="正确" if correct else "错误")
-            ws2.cell(row=row, column=9, value=score_map.get(q.type, 10) if correct else 0)
+            ws2.cell(row=row, column=4, value=q.id)
+            ws2.cell(row=row, column=5, value=type_label.get(q.type, q.type))
+            ws2.cell(row=row, column=6, value=content)
+            ws2.cell(row=row, column=7, value=_export_answer_text(q, q.answer or ""))
+            ws2.cell(row=row, column=8, value=_export_answer_text(q, user_answer) or "未作答")
+            ws2.cell(row=row, column=9, value="正确" if correct else "错误")
+            ws2.cell(row=row, column=10, value=score_map.get(q.type, 10) if correct else 0)
             row += 1
-    autosize(ws2, [12, 12, 8, 12, 50, 14, 24, 10, 8])
+    autosize(ws2, [12, 12, 8, 10, 12, 60, 30, 30, 10, 8])
+    for r_i in range(2, ws2.max_row + 1):
+        for c_i in (6, 7, 8):
+            ws2.cell(row=r_i, column=c_i).alignment = Alignment(
+                vertical="top", wrap_text=True)
 
     # ===== Sheet3: 统计表 =====
     ws3 = wb.create_sheet("统计表")
@@ -2347,8 +2412,8 @@ def export_exam_excel(db: Session, exam_id: int):
         rate = f"{(correct_count / answered * 100):.1f}%" if answered else "-"
         ws3.cell(row=row, column=1, value=idx)
         ws3.cell(row=row, column=2, value=type_label.get(q.type, q.type))
-        ws3.cell(row=row, column=3, value=(q.content or "").replace("<p>", "").replace("</p>", "")[:80])
-        ws3.cell(row=row, column=4, value=q.answer or "")
+        ws3.cell(row=row, column=3, value=_export_plain_text(q.content, limit=300))
+        ws3.cell(row=row, column=4, value=_export_answer_text(q, q.answer or ""))
         ws3.cell(row=row, column=5, value=answered)
         ws3.cell(row=row, column=6, value=correct_count)
         ws3.cell(row=row, column=7, value=rate)
