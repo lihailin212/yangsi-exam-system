@@ -24,6 +24,11 @@
   - 新增 `backend/scripts/upload_images_to_supabase.py`（批量上传）、
     `backend/scripts/migrate_blob_urls_to_supabase.py`（地址迁移，带备份）；
   - 导入 / 去水印 / 题库生成三个脚本改为走统一存储层，不再直接依赖 Vercel SDK。
+- 迁移完成后**已删除旧的 Vercel Blob store**（`yangsi-exam-images`，643 个文件）：
+  删除前做了三方对账 —— 数据库已无 blob 地址、643 个文件在 Supabase 全部存在、
+  本地 `backend/uploads/images/morph/` 也都有备份，确认无独有数据后才删；
+  Vercel 侧的 `BLOB_READ_WRITE_TOKEN` 也随之移除（删 store 会自动清掉），
+  本地 `.env.local` 同步清掉。代码里保留 Blob 回落分支，随时可以再启用。
 
 
 ### 题库图片去水印
