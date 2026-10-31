@@ -353,12 +353,80 @@ def export_exam_records(exam_id: int, db: Session = Depends(get_db),
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
     )
 
+@record_router.get("/{record_id}/review")
+def get_record_review(record_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """返回某条已交卷记录的逐题解析。
+
+    只允许记录本人或管理员访问。正确答案不放进考试接口，
+    避免未交卷考生通过开发者工具提前拿到答案。
+    """
+    from .. import models
+
+    record = db.query(models.ExamRecord).filter(models.ExamRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if record.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="无权查看该考试记录")
+
+    exam = crud.get_exam(db, record.exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="考试不存在")
+
+    try:
+        submitted_answers = json.loads(record.answers or "{}")
+    except (TypeError, ValueError):
+        submitted_answers = {}
+    if not isinstance(submitted_answers, dict):
+        submitted_answers = {}
+
+    score_map = {
+        "single": exam.single_score or 10,
+        "multiple": exam.multiple_score or 20,
+        "judgment": exam.judgment_score or 5,
+        "fill": exam.single_score or 10,
+    }
+    questions = []
+    for q in crud.get_record_questions(db, record):
+        user_answer = str(submitted_answers.get(str(q.id), submitted_answers.get(q.id, "")) or "")
+        is_correct = crud._exam_answer_correct(q, user_answer)
+        qd = schemas.QuestionOut.model_validate(q).model_dump()
+        question_score = score_map.get(q.type, 10)
+        qd.update({
+            "score": question_score,
+            "earned_score": question_score if is_correct else 0,
+            "user_answer": user_answer,
+            "correct_answer": q.answer or "",
+            "is_correct": is_correct,
+        })
+        questions.append(qd)
+
+    return {
+        "record": {
+            "id": record.id,
+            "exam_id": record.exam_id,
+            "user_id": record.user_id,
+            "score": record.score,
+            "total_score": record.total_score,
+            "submitted_at": record.submitted_at,
+        },
+        "exam": {
+            "id": exam.id,
+            "title": exam.title,
+            "pass_score": exam.pass_score,
+        },
+        "submitted_answers": submitted_answers,
+        "questions": questions,
+    }
+
+
 @record_router.get("/{record_id}")
 def get_record(record_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     from ..models import ExamRecord
     r = db.query(ExamRecord).filter(ExamRecord.id == record_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="记录不存在")
+    if r.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="无权查看该考试记录")
     return schemas.ExamRecordOut.model_validate(r)
 
 @record_router.get("/user/{user_id}/exam/{exam_id}")
