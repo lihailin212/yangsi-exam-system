@@ -5,7 +5,7 @@ import os
 # 生产环境：设置为实际域名，如 https://exam.example.com
 FRONTEND_BASE_URL = os.environ.get(
     "FRONTEND_BASE_URL",
-    "https://yangsi-exam-system.vercel.app"  # Vercel 前端部署地址
+    "https://exam.yangsi-lab.cn"  # Vercel 前端部署地址
 )
 
 # 应用版本号。与前端 src/version.js 保持一致，发版时一起改。
