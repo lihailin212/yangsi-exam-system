@@ -501,6 +501,58 @@ def get_paper_questions(db: Session, exam, user_id: int, attempt_no=None):
     return [by_id[i] for i in ids if i in by_id]
 
 
+def get_record_questions(db: Session, record):
+    """取某条已交卷记录实际使用的那份卷子，不创建新随机卷。
+
+    普通考试直接返回考试题目；随机卷通过交卷会话的提交时间定位 attempt_no，
+    再读取该轮已落库的 ExamPaper。这样查看历史成绩时不会误用当前这一轮的题。
+    """
+    exam = get_exam(db, record.exam_id)
+    if not exam:
+        return []
+    if not getattr(exam, "random_mode", False):
+        return list(exam.questions)
+
+    attempt = db.query(models.ExamAttempt).filter(
+        models.ExamAttempt.exam_id == record.exam_id,
+        models.ExamAttempt.user_id == record.user_id,
+        models.ExamAttempt.submitted_at == record.submitted_at,
+    ).first()
+    if attempt:
+        attempt_no = attempt.attempt_no
+    else:
+        # 兼容缺少 ExamAttempt 的历史数据：按交卷时间顺序推算轮次。
+        rows = db.query(models.ExamRecord.id).filter(
+            models.ExamRecord.exam_id == record.exam_id,
+            models.ExamRecord.user_id == record.user_id,
+        ).order_by(models.ExamRecord.submitted_at.asc(), models.ExamRecord.id.asc()).all()
+        attempt_no = next((i for i, row in enumerate(rows, 1) if row.id == record.id), 1)
+
+    paper = db.query(models.ExamPaper).filter(
+        models.ExamPaper.exam_id == record.exam_id,
+        models.ExamPaper.user_id == record.user_id,
+        models.ExamPaper.attempt_no == attempt_no,
+    ).first()
+    try:
+        ids = json.loads(paper.question_ids or "[]") if paper else []
+    except (TypeError, ValueError):
+        ids = []
+    if not ids:
+        # 极端历史数据没有卷子快照时，至少按该条记录的答案题号还原。
+        try:
+            answers = json.loads(record.answers or "{}")
+            if not isinstance(answers, dict):
+                answers = {}
+            ids = [int(qid) for qid in answers.keys() if str(qid).isdigit()]
+        except (TypeError, ValueError):
+            ids = []
+    if not ids:
+        return []
+    rows = db.query(models.Question).filter(models.Question.id.in_(ids)).all()
+    by_id = {q.id: q for q in rows}
+    return [by_id[qid] for qid in ids if qid in by_id]
+
+
 def get_paper_scoring_questions(db: Session, exam, user_id: int, attempt_no=None):
     """判分用：只取该考生卷子上的题号、题型、正确答案（保持卷子顺序）。"""
     if not getattr(exam, "random_mode", False):

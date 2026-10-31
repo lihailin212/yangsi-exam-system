@@ -34,7 +34,7 @@
 
       <div class="result-actions">
         <el-button type="primary" @click="handleLogout">退出</el-button>
-        <el-button @click="reviewVisible = true" v-if="exam">查看解析</el-button>
+        <el-button @click="openReview" v-if="exam">查看解析</el-button>
       </div>
     </div>
 
@@ -43,29 +43,32 @@
     </div>
 
     <!-- 答案解析弹窗 -->
-    <el-dialog v-model="reviewVisible" title="答案解析" width="700px" top="5vh">
-      <div v-for="(q, i) in exam?.questions || []" :key="q.id" class="review-item">
-        <div class="review-header">
-          <span class="review-index">第 {{ i + 1 }} 题</span>
-          <el-tag size="small" :type="typeTagMap[q.type]?.type">{{ typeTagMap[q.type]?.label }}</el-tag>
-          <el-tag size="small" :type="isCorrect(q) ? 'success' : 'danger'">
-            {{ isCorrect(q) ? '✓ 正确' : '✗ 错误' }}
-          </el-tag>
-          <span style="margin-left:auto;font-size:13px;color:#909399">{{ q.score }}分</span>
-        </div>
-        <div class="review-content" v-html="q.content"></div>
-        <div class="review-answers">
-          <div class="my-answer">
-            <span class="answer-label">我的答案：</span>
-            <span :class="isCorrect(q) ? 'correct' : 'wrong'">{{ submittedAnswers[q.id] || '未作答' }}</span>
+    <el-dialog v-model="reviewVisible" title="答案解析" width="700px" top="5vh" :close-on-click-modal="false">
+      <div v-loading="reviewLoading" class="review-list">
+        <el-empty v-if="!reviewLoading && reviewQuestions.length === 0" description="暂无解析数据" />
+        <div v-for="(q, i) in reviewQuestions" :key="q.id" class="review-item">
+          <div class="review-header">
+            <span class="review-index">第 {{ i + 1 }} 题</span>
+            <el-tag size="small" :type="typeTagMap[q.type]?.type">{{ typeTagMap[q.type]?.label }}</el-tag>
+            <el-tag size="small" :type="isCorrect(q) ? 'success' : 'danger'">
+              {{ isCorrect(q) ? '✓ 正确' : '✗ 错误' }}
+            </el-tag>
+            <span style="margin-left:auto;font-size:13px;color:#909399">{{ q.earned_score }} / {{ q.score }}分</span>
           </div>
-          <div class="correct-answer">
-            <span class="answer-label">正确答案：</span>
-            <span class="correct">{{ q.answer }}</span>
+          <div class="review-content" v-html="q.content"></div>
+          <div class="review-answers">
+            <div class="my-answer">
+              <span class="answer-label">我的答案：</span>
+              <span :class="isCorrect(q) ? 'correct' : 'wrong'">{{ formatAnswer(q, q.user_answer) }}</span>
+            </div>
+            <div class="correct-answer">
+              <span class="answer-label">正确答案：</span>
+              <span class="correct">{{ formatAnswer(q, q.correct_answer) }}</span>
+            </div>
           </div>
-        </div>
-        <div class="review-analysis" v-if="q.analysis">
-          <span class="answer-label">解析：</span>{{ q.analysis }}
+          <div class="review-analysis" v-if="q.analysis">
+            <span class="answer-label">解析：</span>{{ q.analysis }}
+          </div>
         </div>
       </div>
     </el-dialog>
@@ -89,7 +92,8 @@ const loading = ref(true)
 const record = ref(null)
 const exam = ref(null)
 const reviewVisible = ref(false)
-const submittedAnswers = ref({})
+const reviewLoading = ref(false)
+const reviewQuestions = ref([])
 
 const typeTagMap = {
   single: { label: '单选', type: 'primary' },
@@ -107,23 +111,40 @@ const passed = computed(() => {
   return exam.value ? percent.value >= exam.value.pass_score : false
 })
 
-// 填空题判分口径与后端一致：全角转半角、去所有空白、英文转小写
-const normalizeFill = (text) => {
-  if (!text) return ''
-  return String(text).normalize('NFKC').replace(/\s+/g, '').trim().toLowerCase()
+const isCorrect = (q) => q.is_correct === true
+
+const optionText = (options, key) => {
+  const value = options?.[key]
+  return value ? `${key}. ${value}` : key
 }
 
-const isCorrect = (q) => {
-  const myAns = submittedAnswers.value[q.id] || ''
-  if (q.type === 'multiple') {
-    return myAns.split(',').sort().join(',') === q.answer.split(',').sort().join(',')
-  }
+const formatAnswer = (q, answer) => {
+  const raw = String(answer || '').trim()
+  if (!raw) return '未作答'
   if (q.type === 'fill') {
-    const given = normalizeFill(myAns)
-    if (!given) return false
-    return String(q.answer || '').split('|').some(alt => normalizeFill(alt) === given)
+    return raw.split('|').filter(Boolean).join(' / ')
   }
-  return myAns === q.answer
+  let options = {}
+  try {
+    options = JSON.parse(q.options || '{}')
+  } catch {}
+  if (q.type === 'multiple') {
+    return raw.split(',').filter(Boolean).map(key => optionText(options, key.trim())).join('、')
+  }
+  return optionText(options, raw)
+}
+
+const openReview = async () => {
+  reviewVisible.value = true
+  reviewLoading.value = true
+  try {
+    const data = await request.get(`/exam-records/${recordId}/review`)
+    reviewQuestions.value = data.questions || []
+  } catch {
+    reviewQuestions.value = []
+  } finally {
+    reviewLoading.value = false
+  }
 }
 
 const formatDate = (dt) => {
@@ -155,10 +176,7 @@ onMounted(async () => {
     } else {
       record.value = recordData
     }
-    // 解析提交的答案
-    if (record.value?.answers) {
-      try { submittedAnswers.value = JSON.parse(record.value.answers) } catch {}
-    }
+    // 逐题解析在点击“查看解析”时单独获取，考试接口不会提前泄露答案。
   } finally {
     loading.value = false
   }
@@ -225,6 +243,10 @@ onMounted(async () => {
 .info-val { color: #303133; font-weight: 500; word-break: break-all; }
 
 .result-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+
+.review-list {
+  min-height: 120px;
+}
 
 .review-item {
   border-bottom: 1px solid #f0f2f5;
