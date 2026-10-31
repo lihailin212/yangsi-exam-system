@@ -1,7 +1,10 @@
 <template>
   <div class="students-page">
     <div class="page-header">
-      <h2>学员管理</h2>
+      <div class="page-title">
+        <h2>学员管理</h2>
+        <span class="student-count">共 {{ total }} 名学员</span>
+      </div>
       <el-button type="primary" @click="openAdd">
         <el-icon><Plus /></el-icon> 添加学员
       </el-button>
@@ -18,6 +21,7 @@
       </div>
 
       <el-table :data="tableData" v-loading="loading" style="width:100%;margin-top:16px">
+        <el-table-column type="index" label="编号" width="70" :index="indexMethod" />
         <el-table-column prop="employee_id" label="工号" width="100" />
         <el-table-column prop="name" label="姓名" width="90" />
         <el-table-column prop="dept" label="科室" width="110" />
@@ -104,6 +108,8 @@ const editingId = ref(null)
 const formRef = ref(null)
 
 const depts = ['内科', '外科', '护理部', '急诊科', '检验科', '放射科', '药剂科', '管理部']
+
+const indexMethod = (index) => (currentPage.value - 1) * pageSize.value + index + 1
 
 const form = reactive({
   employee_id: '',
@@ -199,5 +205,7 @@ onMounted(loadData)
   margin-bottom: 16px;
 }
 .page-header h2 { font-size: 18px; font-weight: 500; }
+.page-title { display: flex; align-items: center; gap: 12px; }
+.student-count { color: #909399; font-size: 13px; }
 .search-bar { display: flex; gap: 10px; flex-wrap: wrap; }
 </style>
