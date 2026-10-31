@@ -1,0 +1,30 @@
+name: Supabase Keep-Alive
+
+# Supabase 免费版项目闲置 7 天会被自动暂停，题库图片（存在 Supabase Storage）
+# 就可能取不到。这里定时打一次数据库查询，保证项目不被判定为闲置。
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase (keeps the free project awake) + check one image
+        env:
+          SUPABASE_URL: https://idkijgsnxrvtyxwjlrty.supabase.co
+          # publishable key：设计上就是可以公开的客户端密钥，
+          # 这里只能读到 heartbeat 表（RLS 只给了 anon 一条 select 策略）
+          SUPABASE_KEY: sb_publishable_A8O72yQ1SLupj19yIMU4QQ_0eJ7LXG8
+          SAMPLE_IMAGE: images/morph/00107bf15e_80ec25.jpg
+        run: |
+          set -e
+          echo "== 数据库心跳 =="
+          curl -sS -f --max-time 30 \
+            -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$SUPABASE_URL/rest/v1/heartbeat?select=ts&limit=1"
+          echo
+          echo "== 图片抽查 =="
+          curl -sS -f -o /dev/null -w "HTTP %{http_code}  %{size_download} bytes  %{time_total}s\n" --max-time 30 \
+            "$SUPABASE_URL/storage/v1/object/public/exam-images/$SAMPLE_IMAGE"
