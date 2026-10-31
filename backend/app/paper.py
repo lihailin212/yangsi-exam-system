@@ -203,6 +203,14 @@ def describe_rule(rule):
     return "%s · %s · %d 道" % (label, qtype, rule.get("count") or 0)
 
 
+def per_user_question_count(raw_rules):
+    """随机卷里每位考生实际要答的题数：各条规则数量之和。
+
+    考试列表显示的"题目数"要用这个值，而不是候选题库的大小。
+    """
+    return sum(rule["count"] for rule in parse_rules(raw_rules))
+
+
 def score_map(exam):
     return {
         "single": exam.single_score or 10,

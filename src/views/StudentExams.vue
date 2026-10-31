@@ -12,7 +12,7 @@
           <template #default="{ row }">{{ row.duration }}分钟</template>
         </el-table-column>
         <el-table-column label="题目数" width="80">
-          <template #default="{ row }">{{ row.question_count }}</template>
+          <template #default="{ row }">{{ displayQuestionCount(row) }}</template>
         </el-table-column>
         <el-table-column label="总分" width="80">
           <template #default="{ row }">{{ row.total_score }}分</template>
@@ -50,7 +50,7 @@
       <div style="padding: 16px 0;">
         <p style="margin-bottom: 12px;">考试名称：<strong>{{ currentExam?.title }}</strong></p>
         <p style="margin-bottom: 12px;">考试时长：<strong>{{ currentExam?.duration }}分钟</strong></p>
-        <p style="margin-bottom: 12px;">题目数量：<strong>{{ currentExam?.question_count }}道</strong></p>
+        <p style="margin-bottom: 12px;">题目数量：<strong>{{ displayQuestionCount(currentExam) }}道</strong></p>
         <p style="color: #E6A23C; font-size: 13px;">考试开始后需在规定时间内完成，请确保网络稳定。</p>
       </div>
       <template #footer>
@@ -73,6 +73,16 @@ const tableData = ref([])
 const examScores = ref({})
 const confirmVisible = ref(false)
 const currentExam = ref(null)
+
+// 随机卷显示每位考生实际要答的题数，固定卷面显示题目总数
+const displayQuestionCount = (exam) => {
+  if (!exam) return 0
+  if (exam.random_mode) {
+    const n = Number(exam.paper_question_count)
+    return Number.isFinite(n) && n > 0 ? n : (exam.question_count || 0)
+  }
+  return exam.question_count || 0
+}
 
 const getStatus = (exam) => {
   const score = examScores.value[exam.id]
@@ -99,7 +109,7 @@ const loadData = async () => {
   loading.value = true
   try {
     const res = await getExams({ skip: 0, limit: 100 })
-    tableData.value = res.items.filter(e => e.question_count > 0)
+    tableData.value = res.items.filter(e => displayQuestionCount(e) > 0)
     
     const token = localStorage.getItem('token')
     const userId = JSON.parse(atob(token.split('.')[1])).sub
@@ -118,7 +128,7 @@ const loadData = async () => {
           examScores.value[exam.id] = recordRes.score
         }
       } catch {
-        exam.total_score = exam.question_count * 10
+        exam.total_score = displayQuestionCount(exam) * 10
       }
     }
   } finally {
