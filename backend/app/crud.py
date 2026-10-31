@@ -2182,11 +2182,20 @@ def _export_plain_text(html: str, limit: int = 500) -> str:
     """把题目 HTML 转成 Excel 里能看的纯文本。
 
     图片题不能把 <img> 标签塞进单元格，导出来是一堆乱码；
-    这里把标签剥掉，并把图片换成 "[图片]" 标记，
-    同时保留图片链接，方便老师回溯原题。
+    这里把标签剥掉，把图片换成 "[图片]" 标记。
+    图片链接单独放到"图片"列并做成可点击的超链接。
+    """
+    text, _ = _export_plain_text_and_links(html, limit)
+    return text
+
+
+def _export_plain_text_and_links(html: str, limit: int = 500):
+    """返回 (纯文本, 图片链接列表)。
+
+    图片链接必须单独成列并设置成 Excel 超链接才行：
+    混在正文里的 URL，Excel 不会把它识别成可点击的链接。
     """
     text = html or ""
-    # 图片先换成占位，后面再把链接附在末尾
     img_links = []
 
     def _img_sub(m):
@@ -2204,11 +2213,9 @@ def _export_plain_text(html: str, limit: int = 500) -> str:
     text = (text.replace("&nbsp;", " ").replace("&amp;", "&")
                 .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
     text = re.sub(r"\n{2,}", "\n", text).strip()
-    if img_links:
-        text = text + "\n图片链接：" + " ; ".join(dict.fromkeys(img_links))
     if limit and len(text) > limit:
         text = text[:limit] + "…"
-    return text
+    return text, list(dict.fromkeys(img_links))
 
 
 def _export_answer_text(question, answer: str) -> str:
@@ -2364,7 +2371,8 @@ def export_exam_excel(db: Session, exam_id: int):
     # 方便直接对着卷子核对。
     ws2 = wb.create_sheet("答题明细")
     write_header(ws2, 1, ["工号", "姓名", "题号", "题目ID", "题型", "题目内容",
-                          "正确答案", "考生答案", "是否正确", "得分"])
+                          "图片", "正确答案", "考生答案", "是否正确", "得分"])
+    link_font = Font(color="0563C1", underline="single")
     row = 2
     for r, answers in parsed:
         # 随机卷按该考生自己那份卷子出题，普通卷用整卷题目
@@ -2377,27 +2385,36 @@ def export_exam_excel(db: Session, exam_id: int):
             if not isinstance(user_answer, str):
                 user_answer = "" if user_answer is None else str(user_answer)
             correct = _exam_answer_correct(q, user_answer)
-            content = _export_plain_text(q.content)
+            content, img_links = _export_plain_text_and_links(q.content)
             ws2.cell(row=row, column=1, value=r.user.employee_id if r.user else "")
             ws2.cell(row=row, column=2, value=r.user.name if r.user else "")
             ws2.cell(row=row, column=3, value=idx)
             ws2.cell(row=row, column=4, value=q.id)
             ws2.cell(row=row, column=5, value=type_label.get(q.type, q.type))
             ws2.cell(row=row, column=6, value=content)
-            ws2.cell(row=row, column=7, value=_export_answer_text(q, q.answer or ""))
-            ws2.cell(row=row, column=8, value=_export_answer_text(q, user_answer) or "未作答")
-            ws2.cell(row=row, column=9, value="正确" if correct else "错误")
-            ws2.cell(row=row, column=10, value=score_map.get(q.type, 10) if correct else 0)
+            # 图片：写成 Excel 超链接，点一下就在浏览器打开原图
+            img_cell = ws2.cell(row=row, column=7)
+            if img_links:
+                img_cell.value = "查看图片"
+                img_cell.hyperlink = img_links[0]
+                img_cell.font = link_font
+            else:
+                img_cell.value = ""
+            ws2.cell(row=row, column=8, value=_export_answer_text(q, q.answer or ""))
+            ws2.cell(row=row, column=9, value=_export_answer_text(q, user_answer) or "未作答")
+            ws2.cell(row=row, column=10, value="正确" if correct else "错误")
+            ws2.cell(row=row, column=11, value=score_map.get(q.type, 10) if correct else 0)
             row += 1
-    autosize(ws2, [12, 12, 8, 10, 12, 60, 30, 30, 10, 8])
+    autosize(ws2, [12, 12, 8, 10, 12, 60, 12, 30, 30, 10, 8])
     for r_i in range(2, ws2.max_row + 1):
-        for c_i in (6, 7, 8):
+        for c_i in (6, 8, 9):
             ws2.cell(row=r_i, column=c_i).alignment = Alignment(
                 vertical="top", wrap_text=True)
 
     # ===== Sheet3: 统计表 =====
     ws3 = wb.create_sheet("统计表")
-    write_header(ws3, 1, ["题号", "题型", "题目内容", "正确答案", "作答人数", "答对人数", "正确率"])
+    write_header(ws3, 1, ["题号", "题目ID", "题型", "题目内容", "图片",
+                          "正确答案", "作答人数", "答对人数", "正确率"])
     row = 2
     for idx, q in enumerate(questions, start=1):
         answered = 0
@@ -2410,13 +2427,22 @@ def export_exam_excel(db: Session, exam_id: int):
             if _exam_answer_correct(q, user_answer):
                 correct_count += 1
         rate = f"{(correct_count / answered * 100):.1f}%" if answered else "-"
+        content3, img_links3 = _export_plain_text_and_links(q.content, limit=300)
         ws3.cell(row=row, column=1, value=idx)
-        ws3.cell(row=row, column=2, value=type_label.get(q.type, q.type))
-        ws3.cell(row=row, column=3, value=_export_plain_text(q.content, limit=300))
-        ws3.cell(row=row, column=4, value=_export_answer_text(q, q.answer or ""))
-        ws3.cell(row=row, column=5, value=answered)
-        ws3.cell(row=row, column=6, value=correct_count)
-        ws3.cell(row=row, column=7, value=rate)
+        ws3.cell(row=row, column=2, value=q.id)
+        ws3.cell(row=row, column=3, value=type_label.get(q.type, q.type))
+        ws3.cell(row=row, column=4, value=content3)
+        img_cell3 = ws3.cell(row=row, column=5)
+        if img_links3:
+            img_cell3.value = "查看图片"
+            img_cell3.hyperlink = img_links3[0]
+            img_cell3.font = link_font
+        else:
+            img_cell3.value = ""
+        ws3.cell(row=row, column=6, value=_export_answer_text(q, q.answer or ""))
+        ws3.cell(row=row, column=7, value=answered)
+        ws3.cell(row=row, column=8, value=correct_count)
+        ws3.cell(row=row, column=9, value=rate)
         row += 1
 
     # 整体统计追加在逐题统计下方
@@ -2440,7 +2466,7 @@ def export_exam_excel(db: Session, exam_id: int):
         ws3.cell(row=row, column=1, value=label)
         ws3.cell(row=row, column=2, value=value)
         row += 1
-    autosize(ws3, [8, 12, 50, 14, 12, 12, 10])
+    autosize(ws3, [8, 10, 12, 50, 12, 30, 12, 12, 10])
 
     import io
     buf = io.BytesIO()
