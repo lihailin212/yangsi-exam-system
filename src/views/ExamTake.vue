@@ -18,7 +18,7 @@
           <span class="q-score">{{ currentQ.score }}分</span>
         </div>
 
-        <div class="question-content" v-html="currentQContent"></div>
+        <div class="question-content" v-html="currentQContent" @click="handleQuestionImageClick"></div>
 
         <!-- 单选题 -->
         <div class="options-area" v-if="currentQ.type === 'single'">
@@ -155,6 +155,8 @@
     <div v-if="loading" class="loading-tip">
       <el-icon class="is-loading"><Loading /></el-icon> 加载中...
     </div>
+
+    <ImagePreview v-model="previewVisible" :src="previewSrc" title="题目图片" />
   </div>
 </template>
 
@@ -164,6 +166,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExam, submitExam, startExam, saveExamDraft } from '@/api/exams'
 import { ArrowLeft, ArrowRight, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import ImagePreview from '@/components/ImagePreview.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -173,6 +176,8 @@ const loading = ref(true)
 const submitting = ref(false)
 // 移动端答题卡是否展开（默认收起，避免题号列表占掉大半屏幕）
 const showMobileNav = ref(false)
+const previewVisible = ref(false)
+const previewSrc = ref('')
 const exam = ref(null)
 const questions = ref([])
 const currentIndex = ref(0)
@@ -236,6 +241,13 @@ const syncDraftNow = async () => {
   } catch {
     // 同步失败不影响答题
   }
+}
+
+const handleQuestionImageClick = (event) => {
+  const img = event.target?.closest?.('img')
+  if (!img) return
+  previewSrc.value = img.currentSrc || img.src
+  previewVisible.value = true
 }
 
 const typeTagMap = {
@@ -481,7 +493,7 @@ onUnmounted(() => {
   word-wrap: break-word;
 }
 
-.question-content :deep(img) { max-width: 100%; border-radius: 4px; }
+.question-content :deep(img) { max-width: 100%; border-radius: 4px; cursor: zoom-in; touch-action: manipulation; }
 .question-content :deep(p) { margin: 0 0 12px; }
 .question-content :deep(p:last-child) { margin-bottom: 0; }
 
