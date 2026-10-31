@@ -66,7 +66,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 
 const props = defineProps({
@@ -82,16 +82,40 @@ const emit = defineEmits(['update:modelValue'])
 // 刚加的第一条就被覆盖掉了。
 const rules = ref([])
 
+// syncing 用来区分"父组件改的"和"用户在组件里改的"，
+// 否则两边互相回写会形成死循环。
+const syncing = ref(false)
+
+const snapshot = (list) => JSON.stringify((list || []).map(r => ({
+  category: r.category || '',
+  type: r.type || '',
+  count: Number(r.count) || 0,
+})))
+
 watch(
   () => props.modelValue,
   (val) => {
-    // 复制一份，避免直接改动父组件传进来的数组
-    if (val !== rules.value) rules.value = (val || []).map(r => ({ ...r }))
+    if (syncing.value) return
+    // 内容一致就不动，避免把用户正在输入的内容冲掉
+    if (snapshot(val) === snapshot(rules.value)) return
+    syncing.value = true
+    rules.value = (val || []).map(r => ({ ...r }))
+    nextTick(() => { syncing.value = false })
   },
   { immediate: true, deep: true }
 )
 
-const commit = () => emit('update:modelValue', rules.value.map(r => ({ ...r })))
+// 用户改了分类/题型/数量后立刻同步给父组件。
+// 以前只在"添加/删除规则"时才提交，导致管理员把 10 道改成 50 道后，
+// 父组件发出去的仍是旧的 10 道，抽出来的题数和总分全都不对。
+watch(
+  rules,
+  () => {
+    if (syncing.value) return
+    emit('update:modelValue', rules.value.map(r => ({ ...r })))
+  },
+  { deep: true }
+)
 
 // 形态学题库里的四个亚类别，管理员按名字选就能直接用
 const subCategories = [
@@ -111,7 +135,6 @@ const hasEmptyRule = computed(() =>
 
 const addRule = (category = '', type = '', count = 10) => {
   rules.value.push({ category, type, count })
-  commit()
 }
 
 const addTypeRule = (type) => {
@@ -123,7 +146,6 @@ const addTypeRule = (type) => {
     type,
     count: exist?.count ?? 10,
   })
-  commit()
 }
 
 const addSubRule = (s) => {
@@ -134,12 +156,10 @@ const addSubRule = (s) => {
     type: exist?.type || '',
     count: exist?.count ?? 10,
   })
-  commit()
 }
 
 const removeRule = (index) => {
   rules.value.splice(index, 1)
-  commit()
 }
 </script>
 
