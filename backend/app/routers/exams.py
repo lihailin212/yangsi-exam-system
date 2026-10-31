@@ -31,6 +31,11 @@ def list_exams(skip: int = 0, limit: int = 20, db: Session = Depends(get_db), _=
             "random_mode": bool(getattr(e, "random_mode", False)),
             "created_at": e.created_at,
             "question_count": len(e.questions),
+            # 随机卷：每位考生实际要答的题数（各条抽题规则数量之和）
+            "paper_question_count": (
+                paper_lib.per_user_question_count(getattr(e, "random_rules", None))
+                if getattr(e, "random_mode", False) else len(e.questions)
+            ),
             "participant_count": len(e.records),
         })
     return {"items": result, "total": total}
@@ -91,6 +96,11 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(g
         "random_mode": random_mode,
         "random_rules": exam.random_rules or "[]",
         "created_at": exam.created_at,
+        # 随机卷：每位考生实际要答的题数（各条抽题规则数量之和）
+        "paper_question_count": (
+            paper_lib.per_user_question_count(exam.random_rules)
+            if random_mode else len(exam_questions)
+        ),
         "questions": questions,
         "question_ids": [q.id for q in exam_questions],
     }
@@ -214,6 +224,10 @@ def create_exam(exam_in: schemas.ExamCreate, db: Session = Depends(get_db), curr
         "created_at": exam.created_at,
         "created_by": exam.created_by,
         "question_count": len(exam.questions),
+        "paper_question_count": (
+            paper_lib.per_user_question_count(getattr(exam, "random_rules", None))
+            if getattr(exam, "random_mode", False) else len(exam.questions)
+        ),
         "participant_count": len(exam.records),
     }
 
@@ -243,6 +257,10 @@ def update_exam(exam_id: int, exam_in: schemas.ExamUpdate, db: Session = Depends
         "created_at": exam.created_at,
         "created_by": exam.created_by,
         "question_count": len(exam.questions),
+        "paper_question_count": (
+            paper_lib.per_user_question_count(getattr(exam, "random_rules", None))
+            if getattr(exam, "random_mode", False) else len(exam.questions)
+        ),
         "participant_count": len(exam.records),
     }
 

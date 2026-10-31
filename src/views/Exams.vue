@@ -23,8 +23,17 @@
         <el-table-column label="时长" width="90">
           <template #default="{ row }">{{ row.duration }}分钟</template>
         </el-table-column>
-        <el-table-column label="题目数" width="80">
-          <template #default="{ row }">{{ row.question_count }}</template>
+        <el-table-column label="题目数" width="90">
+          <template #default="{ row }">
+            <span>{{ displayQuestionCount(row) }}</span>
+            <el-tooltip
+              v-if="row.random_mode"
+              :content="`题库候选 ${row.question_count} 道，每位考生随机抽 ${displayQuestionCount(row)} 道`"
+              placement="top"
+            >
+              <el-icon class="qcount-hint"><InfoFilled /></el-icon>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column label="参考人数" width="90">
           <template #default="{ row }">{{ row.participant_count }}</template>
@@ -340,7 +349,7 @@ import { getQuestions, randomQuestions, getCategories } from '@/api/questions'
 import QuestionRuleEditor from '@/components/QuestionRuleEditor.vue'
 import { getExamLoginUrl, getExamStudents, setExamStudents } from '@/api/distributions'
 import { getStudents } from '@/api/students'
-import { Monitor, Download } from '@element-plus/icons-vue'
+import { Monitor, Download, InfoFilled } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -449,6 +458,16 @@ const scoreOf = (type) => {
 
 // 获取题目分值（根据考试设置）
 const getQuestionScore = (question) => scoreOf(question.type)
+
+// 列表里的"题目数"：随机卷显示每位考生实际要答的题数，固定卷面显示题目总数
+const displayQuestionCount = (row) => {
+  if (!row) return 0
+  if (row.random_mode) {
+    const n = Number(row.paper_question_count)
+    return Number.isFinite(n) && n > 0 ? n : (row.question_count || 0)
+  }
+  return row.question_count || 0
+}
 
 // 已选题目的权威状态。表格只渲染当前 200 道题，不能让它覆盖未显示部分的选中项。
 const selectedTypeById = ref({})
@@ -869,6 +888,13 @@ onMounted(loadData)
 
 <style scoped>
 .exams-page { padding: 20px; }
+.qcount-hint {
+  margin-left: 4px;
+  color: #909399;
+  font-size: 13px;
+  vertical-align: -1px;
+  cursor: help;
+}
 .page-header {
   display: flex;
   justify-content: space-between;
