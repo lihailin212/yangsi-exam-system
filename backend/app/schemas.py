@@ -24,6 +24,12 @@ class TokenResponse(BaseModel):
     name: str
     is_admin: bool
     employee_id: str
+    must_change_password: bool = False  # 初始密码没改，前端要跳改密码页
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
 
 # ---- User ----
 class UserCreate(BaseModel):

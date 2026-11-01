@@ -19,6 +19,7 @@ const routes = [
     ]
   },
   { path: '/login', component: () => import('@/views/Login.vue') },
+  { path: '/change-password', component: () => import('@/views/ChangePassword.vue') },
   { path: '/exam-take/:id', component: () => import('@/views/ExamTake.vue'), meta: { requiresAuth: true } },
   { path: '/exam-result/:id', component: () => import('@/views/ExamResult.vue'), meta: { requiresAuth: true } },
   { path: '/exam-login/:examId', component: () => import('@/views/ExamLogin.vue') },
@@ -39,9 +40,17 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token')
   const isAdmin = localStorage.getItem('isAdmin') === 'true'
+  const mustChangePassword = localStorage.getItem('mustChangePassword') === 'true'
 
-  if (to.meta.requiresAuth && !token) {
+  if (to.path === '/change-password') {
+    // 改密码页不走下面的规则，但没登录也不该进
+    if (!token) next('/login')
+    else next()
+  } else if (to.meta.requiresAuth && !token) {
     next('/login')
+  } else if (mustChangePassword) {
+    // 初始密码还没改，先去改密码
+    next('/change-password')
   } else if (to.path === '/login' && token) {
     next(isAdmin ? '/dashboard' : '/my-exams')
   } else if (to.meta.requiresAdmin && !isAdmin) {

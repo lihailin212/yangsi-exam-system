@@ -99,7 +99,13 @@ curl "https://stellar-youth-production-1591.up.railway.app/uploads/images/202604
 
 ---
 
-## 五、各环境密码（admin/admin123）
+## 五、各环境初始密码
+
+管理员工号固定为 `admin`。初始密码由后端环境变量 `ADMIN_INITIAL_PASSWORD` 决定；
+没配置时后端启动会随机生成并打印在后端日志里（Railway 部署日志）。
+
+初始密码只能用一次：首次登录会强制跳转改密页，改完之前其他接口不可用。
+建议在各环境的 Railway 后端服务变量里分别配置一个 `ADMIN_INITIAL_PASSWORD`。
 
 | 环境 | 地址 |
 |------|------|

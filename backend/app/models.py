@@ -35,6 +35,8 @@ class User(Base):
     role = Column(String, default="")
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)  # 账号是否启用
+    # 初始密码还没改过：这类账号登录后只能改密码，其余接口一律挡住
+    must_change_password = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     records = relationship("ExamRecord", back_populates="user")
 

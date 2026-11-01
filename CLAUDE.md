@@ -40,8 +40,12 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 ### Default Admin Account
 - Employee ID: `admin`
-- Password: `admin123`
+- Initial password: from env var `ADMIN_INITIAL_PASSWORD`; if unset, a random
+  16-char password is generated and printed in the backend startup log
 - Created automatically on first startup
+- The initial password can only be used once: the first login is forced onto
+  the "change password" page, and every other API returns 403 until it is changed
+- Legacy accounts still on the hardcoded `admin123` are flagged on startup
 
 ## Architecture
 

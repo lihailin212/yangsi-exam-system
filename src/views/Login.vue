@@ -164,9 +164,15 @@ const handleLogin = () => {
     if (!valid) return
     loading.value = true
     try {
-      await authStore.doLogin(form.value.employee_id, form.value.password)
-      ElMessage.success({ message: '登录成功，欢迎回来！', duration: 2000 })
-      router.push('/dashboard')
+      const res = await authStore.doLogin(form.value.employee_id, form.value.password)
+      if (res.must_change_password) {
+        // 初始密码首次登录：先去改密码，改完才能用系统
+        ElMessage.warning('首次登录，请先修改初始密码')
+        router.push('/change-password')
+      } else {
+        ElMessage.success({ message: '登录成功，欢迎回来！', duration: 2000 })
+        router.push('/dashboard')
+      }
     } catch {
       // 错误已由 axios 拦截器处理
     } finally {

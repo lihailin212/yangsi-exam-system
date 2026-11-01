@@ -31,7 +31,8 @@ class UserSnapshot:
     """当前用户的只读快照（只带认证与鉴权需要的字段）。"""
 
     __slots__ = ("id", "employee_id", "name", "password_hash", "dept",
-                 "role", "is_admin", "is_active", "created_at")
+                 "role", "is_admin", "is_active", "must_change_password",
+                 "created_at")
 
     def __init__(self, user):
         self.id = user.id
@@ -42,6 +43,7 @@ class UserSnapshot:
         self.role = user.role
         self.is_admin = bool(user.is_admin)
         self.is_active = bool(user.is_active)
+        self.must_change_password = bool(getattr(user, "must_change_password", False))
         self.created_at = user.created_at
 
 
@@ -116,12 +118,41 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception
     snapshot = get_cached_user(user_id)
-    if snapshot is not None:
-        return snapshot
+    if snapshot is None:
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if user is None:
+            raise credentials_exception
+        snapshot = cache_user(user)
+    if snapshot.must_change_password:
+        # 初始密码还没改：除改密码接口外一律挡住。
+        # 否则拿到初始密码的人可以直接用管理后台。
+        raise HTTPException(status_code=403, detail="请先修改初始密码")
+    return snapshot
+
+def get_current_db_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """取当前登录用户的 ORM 对象（改密码这类要落库的接口用）。
+
+    和 get_current_user 的区别是这里不检查 must_change_password——
+    否则初始密码没改的管理员就改不了密码了。
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="无效的认证凭据",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+        user_id = int(user_id)
+    except JWTError:
+        raise credentials_exception
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
         raise credentials_exception
-    return cache_user(user)
+    return user
+
 
 def require_admin(current_user: models.User = Depends(get_current_user)):
     if not current_user.is_admin:

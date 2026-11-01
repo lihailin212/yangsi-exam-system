@@ -1,0 +1,35 @@
+版权所有 (c) 2026 上海杨思医院 检验科 · 瑞智学考试系统
+
+保留所有权利。
+
+本软件及其源代码、文档、配置及相关素材（统称"本项目"）均为权利人所有，
+未向公众授予任何开源许可。任何人未经权利人事先书面许可，不得实施下列行为：
+
+  1. 复制、下载、克隆或以其他方式复制本项目或其任何部分；
+  2. 修改、改编、翻译本项目，或基于本项目制作衍生作品；
+  3. 传播、公开发布、发布本项目（包括 GitHub 等代码托管平台上的 Fork）；
+  4. 将本项目用于商业用途，或用于任何直接或间接带来收益的场景；
+  5. 对本项目进行再许可、反编译、反汇编以获取源代码。
+
+GitHub 等托管平台的服务条款允许用户在平台内浏览与 Fork 仓库内容，
+该等平台内操作不构成对本项目的许可，本条款对其同样适用。
+
+如需授权使用（试用、集成、二次开发、教学或商业部署），请联系项目维护者
+取得书面授权。除非另有书面约定，按上述条款使用本项目即视为违反著作权法。
+
+--------------------------------------------------------------------------
+Copyright (c) 2026 Shanghai Yangsi Hospital, Department of Laboratory.
+All rights reserved.
+
+This software and its source code, documentation, configuration and related
+materials (the "Project") are proprietary. No open-source license is granted.
+
+Permission to use, copy, modify, merge, publish, distribute, sublicense,
+sublicense, and/or sell copies of the Project is hereby expressly denied
+without the prior written permission of the copyright holder.
+
+The right to view and fork this repository within GitHub or any similar
+hosting platform, as granted by such platform's terms of service, does not
+constitute a license to the Project and is likewise governed by this notice.
+
+Unauthorized use of the Project may result in civil and criminal liability.

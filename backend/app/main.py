@@ -1,11 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import secrets
+import sys
 from fastapi.responses import FileResponse, RedirectResponse
 from .database import engine, Base, SessionLocal
 from . import models
-from .config import APP_VERSION
-from .auth import hash_password
+from .config import APP_VERSION, ADMIN_INITIAL_PASSWORD
+from .auth import verify_password
 from .routers import auth, exams, questions, students, statistics, upload, settings, distributions, arenas, arenas_ws
 
 # 创建所有表
@@ -110,6 +112,8 @@ _backfill_total_score()
 
 _add_column("ALTER TABLE exams ADD COLUMN retake_limit INTEGER DEFAULT 0")
 _add_column("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+# 初始密码没改过的账号：登录后强制改密码，改完之前其他接口一律拒绝
+_add_column("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE")
 _add_column("ALTER TABLE arenas ADD COLUMN current_question_id INTEGER")
 _sync_sequences()
 
@@ -196,23 +200,64 @@ def warn_local_database():
         )
 
 
+# 老版本写死的默认密码。现在只用来识别"还停在默认密码"的历史账号，
+# 新建账号一律走环境变量或随机生成。
+LEGACY_DEFAULT_PASSWORD = "admin123"
+
+
+def _generate_initial_password(length: int = 16) -> str:
+    """生成一次性初始密码。
+
+    字符集去掉容易混淆的 O/0、l/1/I，避免手抄时输错。
+    """
+    alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*-_=+"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
 @app.on_event("startup")
 def init_admin():
-    """启动时初始化管理员账号"""
+    """启动时初始化管理员账号。
+
+    初始密码有两个来源：
+      1. 环境变量 ADMIN_INITIAL_PASSWORD —— 部署时自己定；
+      2. 没配就随机生成一个，打印在启动日志里。
+    两种情况都只用来第一次登录，登录后必须改密码（must_change_password），
+    改完之前其他接口一律拒绝。
+    """
     db = SessionLocal()
     try:
         from . import crud, schemas
-        if not crud.get_user_by_employee_id(db, "admin"):
+        admin = crud.get_user_by_employee_id(db, "admin")
+        if admin is None:
+            initial = ADMIN_INITIAL_PASSWORD or _generate_initial_password()
             admin = crud.create_user(db, schemas.UserCreate(
                 employee_id="admin",
                 name="管理员",
-                password="admin123",
+                password=initial,
                 dept="管理部",
                 role="系统管理员",
                 is_admin=True,
             ))
+            admin.must_change_password = True
+            db.commit()
+            db.refresh(admin)
+            print("=" * 60, file=sys.stderr)
+            print("[init] 已创建管理员账号 admin", file=sys.stderr)
+            print("[init] 初始密码：%s" % initial, file=sys.stderr)
+            print("[init] 该密码只能用于第一次登录，登录后必须立即修改。", file=sys.stderr)
+            print("=" * 60, file=sys.stderr)
             # 创建示例数据
             _create_sample_data(db, crud, schemas, admin.id)
+        elif ADMIN_INITIAL_PASSWORD:
+            print("[init] 管理员账号已存在，忽略 ADMIN_INITIAL_PASSWORD"
+                  "（不会重置线上已有密码）", file=sys.stderr)
+        if (not admin.must_change_password
+                and verify_password(LEGACY_DEFAULT_PASSWORD, admin.password_hash)):
+            # 历史遗留：还在用写死的 admin123，标记成必须改密码
+            admin.must_change_password = True
+            db.commit()
+            print("[init] 检测到管理员仍在使用默认密码 admin123，"
+                  "下次登录后必须修改密码", file=sys.stderr)
     finally:
         db.close()
 
