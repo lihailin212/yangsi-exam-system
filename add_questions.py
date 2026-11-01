@@ -2,8 +2,15 @@ import json
 import random
 import urllib.request
 
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZXhwIjoxNzc2NDI1MTY0fQ.l9HEVsoRC1Lyol80P4xyQCVCR39fZo9Px03jOVAlpEQ"
-BASE_URL = "http://localhost:8000"
+import os
+
+# 管理员 token 从环境变量读，别再写死在源码里。
+# 登录拿 token：
+#   curl -s -X POST http://localhost:8000/api/auth/login \
+#     -H "Content-Type: application/json" \
+#     -d '{"employee_id":"admin","password":"<你的密码>"}'
+TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
+BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000").strip()
 
 url_map = {
     "多分叶中性粒细胞": "/uploads/images/20260416_bb049a1737a6404983a174e04672c338.jpg",
@@ -52,6 +59,9 @@ for i, correct in enumerate(cells):
         "category": "形态学/细胞形态学"
     }
 
+    if not TOKEN:
+        print("缺少 ADMIN_TOKEN 环境变量，先登录取 token 再运行本脚本")
+        break
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(
         f"{BASE_URL}/api/questions",

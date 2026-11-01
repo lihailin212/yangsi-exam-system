@@ -94,45 +94,55 @@ https://exam.yangsi-lab.cn/#/exam-login/2
 如果图片不显示，检查：
 ```bash
 # 测试图片访问
-curl "(Vercel: https://exam.yangsi-lab.cn)/uploads/images/20260412_1c9d88384b5d491292dd9261ecdf116b.jpg"
+curl "https://exam.yangsi-lab.cn/uploads/images/20260412_1c9d88384b5d491292dd9261ecdf116b.jpg"
 ```
 
 ---
 
-## 五、各环境初始密码
+## 五、各环境初始密码与签名密钥
 
-管理员工号固定为 dmin。初始密码由后端环境变量 ADMIN_INITIAL_PASSWORD 决定；
-没配置时后端启动会随机生成并打印在后端启动日志里。
+管理员工号固定为 `admin`。初始密码由后端环境变量 `ADMIN_INITIAL_PASSWORD` 决定；
+没配置时后端启动会随机生成并打印在后端日志里（Vercel 上看后端服务的 Runtime Logs）。
 
 初始密码只能用一次：首次登录会强制跳转改密页，改完之前其他接口不可用。
 
 ### 在 Vercel 上配置
 
-线上环境是 **Vercel**（项目 yangsi-exam-system，地址 https://exam.yangsi-lab.cn），
+线上环境是 **Vercel**（项目 `yangsi-exam-system`，地址 https://exam.yangsi-lab.cn），
 不是 Railway（旧的 Railway 地址已全部 404）。
 
 在 Vercel 项目的 **Settings → Environment Variables** 里添加：
 
 | 变量名 | 值 | 类型 | 环境 |
 |--------|----|----|------|
-| ADMIN_INITIAL_PASSWORD | 自己定义的强密码 | Secret | Production / Preview / Development |
+| `ADMIN_INITIAL_PASSWORD` | 自己定义的强密码 | Secret | Production / Preview / Development |
+| `SECRET_KEY` | `secrets.token_urlsafe(48)` 生成的随机值 | Secret | Production / Preview / Development |
 
-`ash
+`SECRET_KEY` 是 JWT 签名密钥。以前后端把它写死为 `exam-system-secret-key-2024`，
+等于把签名密钥公开在源码里——拿到源码就能伪造任意用户（含管理员）的 token。
+现在只从环境变量读，未配置时退化为每进程随机生成并打警告。
+
+```bash
+# 生成一个强随机值
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+
 # 以命令行方式配置（项目级，对 frontend 和 backend 两个 service 都生效）
 vercel env add ADMIN_INITIAL_PASSWORD --environment "production,preview,development" \
   --value "<你的强密码>" --sensitive --force
-`
+```
 
 注意：
 
 - Vercel CLI 目前不支持 **service 级**变量，只能加项目级。前端是 Vite 构建，
-  非 VITE_ 前缀的变量不会被打包到浏览器里，安全。
+  非 `VITE_` 前缀的变量不会被打包到浏览器里，安全。
 - 改完环境变量后必须**重新部署**才会生效（现有 deployment 不会自动重跑）：
-  `ash
+  ```bash
   vercel redeploy <deployment-url> --environment production
-  `
-- 变量只在**创建 admin 账号那一刻**生效。账号已存在时，后端会忽略这个变量（不会重置线上已有密码）。
-- 如果账号已存在但密码还是旧的 dmin123，服务启动时会自动把它标记为“必须修改”。
+  ```
+- `ADMIN_INITIAL_PASSWORD` 只在**创建 admin 账号那一刻**生效。账号已存在时，
+  后端会忽略这个变量（不会重置线上已有密码）。
+- 如果账号已存在但密码还是旧的 `admin123`，服务启动时会自动把它标记为“必须修改”。
+- 更换 `SECRET_KEY` 会让所有已登录用户的 token 立即失效（需要重新登录），这是预期行为。
 
 | 环境 | 地址 |
 |------|------|

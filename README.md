@@ -142,9 +142,14 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```bash
 # 部署平台（Vercel / Docker 等）的环境变量里配置
 ADMIN_INITIAL_PASSWORD=你设定的初始密码
+SECRET_KEY=你生成的 JWT 签名密钥
 ```
 
 改完密码后，初始密码立即失效，密码只以 bcrypt 哈希存在数据库里。
+
+**SECRET_KEY 也必须配。**JWT 签名密钥写死在源码里等于公开签名密钥——任何人拿到源码都能伪造管理员 token。
+后端未配置时会退化为每进程随机生成并打警告：多实例部署时各实例密钥不一致，登录态会互相失效。
+更换 SECRET_KEY 会让所有已登录用户的 token 立即失效，需要重新登录。
 
 ## 📁 项目结构
 
