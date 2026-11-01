@@ -10,7 +10,22 @@ from .database import get_db
 from . import models
 from .timeutil import epoch_seconds
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "exam-system-secret-key-2024")
+# JWT 签名密钥。必须由环境变量 SECRET_KEY 提供。
+#
+# 以前这里写死了一个默认值，等于把签名密钥公开在源码里：任何人拿到源码就能
+# 伪造任意用户的 token（含管理员）。现在没配就退化成"每个进程随机一把"，
+# 至少不能被伪造——但多实例部署时各实例密钥不同、token 会互相失效，
+# 所以线上必须在环境变量里显式配置一个固定的强随机值。
+_SECRET_KEY_ENV = os.environ.get("SECRET_KEY", "").strip()
+if _SECRET_KEY_ENV:
+    SECRET_KEY = _SECRET_KEY_ENV
+else:
+    import secrets as _secrets
+    import sys as _sys
+    SECRET_KEY = _secrets.token_urlsafe(48)
+    print("[警告] 未配置环境变量 SECRET_KEY，已临时随机生成一把签名密钥。"
+          "多实例部署时各实例密钥不一致会导致登录态互相失效，"
+          "请在部署平台的环境变量里配置一个固定值。", file=_sys.stderr)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24小时
 ARENA_PLAYER_TOKEN_EXPIRE_MINUTES = 60 * 6  # 选手令牌6小时
