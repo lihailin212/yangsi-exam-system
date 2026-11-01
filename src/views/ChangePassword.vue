@@ -57,6 +57,8 @@
         </el-form-item>
       </el-form>
 
+      <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
+
       <p class="tip">提示：新密码至少 8 位，建议包含字母、数字和符号</p>
     </div>
   </div>
@@ -74,6 +76,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const formRef = ref(null)
 const loading = ref(false)
+const errorMessage = ref('')
 
 const form = ref({
   old_password: '',
@@ -103,6 +106,7 @@ const submit = () => {
   formRef.value.validate(async (valid) => {
     if (!valid) return
     loading.value = true
+    errorMessage.value = ''
     try {
       await changePassword({
         old_password: form.value.old_password,
@@ -111,8 +115,10 @@ const submit = () => {
       authStore.clearMustChangePassword()
       ElMessage.success('密码修改成功，请牢记新密码')
       router.replace(authStore.isAdmin ? '/dashboard' : '/my-exams')
-    } catch {
-      // 错误已由 axios 拦截器提示
+    } catch (e) {
+      // 原密码错误等由后端返回 400 + detail，这里内联展示
+      errorMessage.value = e?.response?.data?.detail
+        || (e?.response ? '修改失败，请检查输入' : '网络异常，请稍后重试')
     } finally {
       loading.value = false
     }
@@ -179,6 +185,14 @@ const submit = () => {
   border: none;
   border-radius: var(--radius-sm);
   background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
+}
+
+.error-message {
+  margin: 0 0 10px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #F56C6C;
 }
 
 .tip {

@@ -13,7 +13,7 @@ export const getInviteInfo = (code) =>
   request.get(`/invite/${code}`)
 
 export const inviteLogin = (data) =>
-  request.post('/invite/login', data)
+  request.post('/invite/login', data, { skipAuthRedirect: true, silent: true })
 
 export const getExamLoginUrl = (examId) =>
   request.get('/distributions/frontend-url', { params: { exam_id: examId } })

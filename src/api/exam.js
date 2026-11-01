@@ -13,4 +13,5 @@ export const getExamInfoByInviteCode = (code) => request.get(`/invite/${code}`)
 /**
  * 考生登录（无需认证）
  */
-export const examLogin = (data) => request.post('/exam-login', data)
+export const examLogin = (data) =>
+  request.post('/exam-login', data, { skipAuthRedirect: true, silent: true })

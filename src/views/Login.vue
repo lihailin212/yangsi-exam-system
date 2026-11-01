@@ -98,6 +98,8 @@
                     <span v-else class="loading-text">登录中...</span>
                   </el-button>
                 </el-form-item>
+
+                <p v-if="loginError" class="login-error">{{ loginError }}</p>
               </el-form>
             </el-tab-pane>
 
@@ -143,6 +145,7 @@ const authStore = useAuthStore()
 const settingsStore = useSettingsStore()
 const formRef = ref(null)
 const loading = ref(false)
+const loginError = ref('')
 const activeTab = ref('account')
 const qrcodeRef = ref(null)
 const currentUrl = ref(window.location.origin + window.location.pathname)
@@ -163,6 +166,7 @@ const handleLogin = () => {
   formRef.value.validate(async (valid) => {
     if (!valid) return
     loading.value = true
+    loginError.value = ''
     try {
       const res = await authStore.doLogin(form.value.employee_id, form.value.password)
       if (res.must_change_password) {
@@ -173,8 +177,10 @@ const handleLogin = () => {
         ElMessage.success({ message: '登录成功，欢迎回来！', duration: 2000 })
         router.push('/dashboard')
       }
-    } catch {
-      // 错误已由 axios 拦截器处理
+    } catch (e) {
+      // 登录接口的错误不走全局拦截器（避免被当成 token 失效跳走），这里直接展示
+      loginError.value = e?.response?.data?.detail
+        || (e?.response ? '登录失败，请检查工号和密码' : '网络异常，请稍后重试')
     } finally {
       loading.value = false
     }
@@ -563,6 +569,15 @@ watch(activeTab, handleTabChange)
 .loading-text {
   position: relative;
   z-index: 1;
+}
+
+/* Error Tip */
+.login-error {
+  margin-top: var(--space-3);
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #F56C6C;
 }
 
 /* QR Code Area */

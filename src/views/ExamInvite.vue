@@ -142,7 +142,11 @@ const handleLogin = async () => {
     authStore.isAdmin = res.is_admin
     router.push({ path: `/exam-take/${exam.value.exam_id}` })
   } catch (e) {
-    loginError.value = e.response?.data?.detail || '工号或密码错误，您没有此考试的访问权限'
+    if (e.response) {
+      loginError.value = e.response.data?.detail || '工号或密码错误，您没有此考试的访问权限'
+    } else {
+      loginError.value = '网络异常，请检查网络后重试'
+    }
   } finally {
     loading.value = false
   }

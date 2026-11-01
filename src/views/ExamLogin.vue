@@ -144,8 +144,10 @@ const handleLogin = async () => {
   } catch (e) {
     if (e.response?.status === 403) {
       loginError.value = e.response.data.detail || '您已达到该考试的参加次数上限'
+    } else if (e.response) {
+      loginError.value = e.response.data?.detail || '工号或密码错误，请确认您的账号有效'
     } else {
-      loginError.value = e.response?.data?.detail || '工号或密码错误，请确认您的账号有效'
+      loginError.value = '网络异常，请检查网络后重试'
     }
   } finally {
     loading.value = false
