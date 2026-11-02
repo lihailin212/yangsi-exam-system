@@ -95,7 +95,6 @@
       ref="studyCardRef"
       class="study-card"
       :class="{ dragging: isDragging }"
-      :style="studyCardStyle"
       @mousedown="onHeaderMouseDown"
     >
       <template #header>
@@ -248,37 +247,42 @@ const studyCardRef = ref(null)
 const isDragging = ref(false)
 const studyPos = ref({ left: 0, top: 0 })
 let dragState = null
+let rafId = 0
+let pendingPos = null
 
-const studyCardStyle = computed(() => ({
-  position: 'fixed',
-  left: `${studyPos.value.left}px`,
-  top: `${studyPos.value.top}px`,
-  margin: '0',
-  zIndex: isDragging.value ? 1501 : 1500,
-}))
+const getCardEl = () => studyCardRef.value?.$el || studyCardRef.value
+
+// 直接写样式，不走 Vue 响应式，拖动才跟手
+const applyPos = (left, top) => {
+  const el = getCardEl()
+  if (!el) return
+  el.style.left = `${Math.round(left)}px`
+  el.style.top = `${Math.round(top)}px`
+}
 
 // 进入学习模式后：先量出卡片在页面里的位置，再切换成浮动窗口
 const initStudyPos = async () => {
   await nextTick()
-  const el = studyCardRef.value?.$el || studyCardRef.value
+  const el = getCardEl()
   if (!el) return
   const rect = el.getBoundingClientRect()
   studyPos.value = { left: rect.left, top: rect.top }
+  applyPos(rect.left, rect.top)
 }
 
 // 双击标题栏：回到主区域居中位置
-const resetCardPosition = async () => {
-  const el = studyCardRef.value?.$el || studyCardRef.value
+const resetCardPosition = () => {
+  const el = getCardEl()
   if (!el) return
   const main = document.querySelector('.main-content')
   const mainRect = main?.getBoundingClientRect()
   const rect = el.getBoundingClientRect()
   const areaLeft = mainRect ? mainRect.left : 0
   const areaWidth = mainRect ? mainRect.width : window.innerWidth
-  studyPos.value = {
-    left: Math.max(areaLeft + 8, areaLeft + (areaWidth - rect.width) / 2),
-    top: (mainRect ? mainRect.top : 0) + 16,
-  }
+  const left = Math.max(areaLeft + 8, areaLeft + (areaWidth - rect.width) / 2)
+  const top = (mainRect ? mainRect.top : 0) + 16
+  studyPos.value = { left, top }
+  applyPos(left, top)
 }
 
 // 按住标题栏拖动窗口
@@ -292,13 +296,15 @@ const onHeaderMouseDown = (e) => {
   if (!el) return
 
   isDragging.value = true
+  // 基准位置取当前实际位置，保证和鼠标完全对齐，不会有累积误差
+  const rect = el.getBoundingClientRect()
   dragState = {
     startX: e.clientX,
     startY: e.clientY,
-    baseLeft: studyPos.value.left,
-    baseTop: studyPos.value.top,
-    width: el.offsetWidth,
-    height: el.offsetHeight,
+    baseLeft: rect.left,
+    baseTop: rect.top,
+    grabX: e.clientX - rect.left,
+    grabY: e.clientY - rect.top,
   }
   document.addEventListener('mousemove', onHeaderMouseMove)
   document.addEventListener('mouseup', onHeaderMouseUp)
@@ -307,20 +313,41 @@ const onHeaderMouseDown = (e) => {
 
 const onHeaderMouseMove = (e) => {
   if (!dragState) return
-  const dx = e.clientX - dragState.startX
-  const dy = e.clientY - dragState.startY
   // 始终给标题栏留出可抓取的位置，窗口不会被拖到完全抓不到的地方
   const maxLeft = Math.max(0, window.innerWidth - 140)
   const maxTop = Math.max(0, window.innerHeight - 60)
-  studyPos.value = {
-    left: Math.min(Math.max(dragState.baseLeft + dx, 0), maxLeft),
-    top: Math.min(Math.max(dragState.baseTop + dy, 0), maxTop),
+  const left = Math.min(Math.max(e.clientX - dragState.grabX, 0), maxLeft)
+  const top = Math.min(Math.max(e.clientY - dragState.grabY, 0), maxTop)
+  pendingPos = { left, top }
+  // 一帧只写一次样式，鼠标再快也不会掉帧
+  if (!rafId) {
+    rafId = requestAnimationFrame(() => {
+      rafId = 0
+      if (pendingPos) {
+        applyPos(pendingPos.left, pendingPos.top)
+        studyPos.value = pendingPos
+        pendingPos = null
+      }
+    })
+  }
+}
+
+const flushPendingPos = () => {
+  if (rafId) {
+    cancelAnimationFrame(rafId)
+    rafId = 0
+  }
+  if (pendingPos) {
+    applyPos(pendingPos.left, pendingPos.top)
+    studyPos.value = pendingPos
+    pendingPos = null
   }
 }
 
 const onHeaderMouseUp = () => {
   isDragging.value = false
   dragState = null
+  flushPendingPos()
   document.removeEventListener('mousemove', onHeaderMouseMove)
   document.removeEventListener('mouseup', onHeaderMouseUp)
 }
@@ -484,6 +511,7 @@ const exitStudy = () => {
   studying.value = false
   studyPos.value = { left: 0, top: 0 }
   isDragging.value = false
+  pendingPos = null
   showCompleteDialog.value = false
   studyQuestions.value = []
   currentIndex.value = 0
@@ -734,11 +762,15 @@ onMounted(() => {
 
 /* 学习模式样式 */
 .study-card {
+  position: fixed;
+  margin: 0;
+  z-index: 1500;
   width: 800px;
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 110px);
   display: flex;
   flex-direction: column;
+  will-change: left, top;
 }
 
 .study-card :deep(.el-card__header) {
@@ -765,6 +797,7 @@ onMounted(() => {
 }
 
 .study-card.dragging {
+  z-index: 1501;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
 }
 
