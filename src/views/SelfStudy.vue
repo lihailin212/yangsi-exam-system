@@ -247,17 +247,19 @@ const studyCardRef = ref(null)
 const isDragging = ref(false)
 const studyPos = ref({ left: 0, top: 0 })
 let dragState = null
-let rafId = 0
 let pendingPos = null
 
 const getCardEl = () => studyCardRef.value?.$el || studyCardRef.value
 
-// 直接写样式，不走 Vue 响应式，拖动才跟手
-const applyPos = (left, top) => {
+// 窗口位置：left/top 是"锚点"，拖动过程用 transform 做位移。
+// transform 走合成层，不触发重排，鼠标一动窗口就动，不会拖着一张影。
+const setAnchor = (left, top) => {
   const el = getCardEl()
   if (!el) return
+  el.style.transform = ''
   el.style.left = `${Math.round(left)}px`
   el.style.top = `${Math.round(top)}px`
+  studyPos.value = { left, top }
 }
 
 // 进入学习模式后：先量出卡片在页面里的位置，再切换成浮动窗口
@@ -266,8 +268,7 @@ const initStudyPos = async () => {
   const el = getCardEl()
   if (!el) return
   const rect = el.getBoundingClientRect()
-  studyPos.value = { left: rect.left, top: rect.top }
-  applyPos(rect.left, rect.top)
+  setAnchor(rect.left, rect.top)
 }
 
 // 双击标题栏：回到主区域居中位置
@@ -281,8 +282,7 @@ const resetCardPosition = () => {
   const areaWidth = mainRect ? mainRect.width : window.innerWidth
   const left = Math.max(areaLeft + 8, areaLeft + (areaWidth - rect.width) / 2)
   const top = (mainRect ? mainRect.top : 0) + 16
-  studyPos.value = { left, top }
-  applyPos(left, top)
+  setAnchor(left, top)
 }
 
 // 按住标题栏拖动窗口
@@ -296,13 +296,14 @@ const onHeaderMouseDown = (e) => {
   if (!el) return
 
   isDragging.value = true
-  // 基准位置取当前实际位置，保证和鼠标完全对齐，不会有累积误差
+  // 清掉上一次拖动残留的位移，保证起手位置就是鼠标位置
+  el.style.transform = ''
   const rect = el.getBoundingClientRect()
+  // 基准位置取当前实际位置，保证和鼠标完全对齐，不会有累积误差
+  setAnchor(rect.left, rect.top)
   dragState = {
-    startX: e.clientX,
-    startY: e.clientY,
-    baseLeft: rect.left,
-    baseTop: rect.top,
+    anchorLeft: rect.left,
+    anchorTop: rect.top,
     grabX: e.clientX - rect.left,
     grabY: e.clientY - rect.top,
   }
@@ -313,41 +314,26 @@ const onHeaderMouseDown = (e) => {
 
 const onHeaderMouseMove = (e) => {
   if (!dragState) return
+  const el = getCardEl()
+  if (!el) return
   // 始终给标题栏留出可抓取的位置，窗口不会被拖到完全抓不到的地方
   const maxLeft = Math.max(0, window.innerWidth - 140)
   const maxTop = Math.max(0, window.innerHeight - 60)
   const left = Math.min(Math.max(e.clientX - dragState.grabX, 0), maxLeft)
   const top = Math.min(Math.max(e.clientY - dragState.grabY, 0), maxTop)
+  // 同步写 transform：不等下一帧，鼠标到哪窗口就到哪
+  el.style.transform = `translate3d(${Math.round(left - dragState.anchorLeft)}px, ${Math.round(top - dragState.anchorTop)}px, 0)`
   pendingPos = { left, top }
-  // 一帧只写一次样式，鼠标再快也不会掉帧
-  if (!rafId) {
-    rafId = requestAnimationFrame(() => {
-      rafId = 0
-      if (pendingPos) {
-        applyPos(pendingPos.left, pendingPos.top)
-        studyPos.value = pendingPos
-        pendingPos = null
-      }
-    })
-  }
-}
-
-const flushPendingPos = () => {
-  if (rafId) {
-    cancelAnimationFrame(rafId)
-    rafId = 0
-  }
-  if (pendingPos) {
-    applyPos(pendingPos.left, pendingPos.top)
-    studyPos.value = pendingPos
-    pendingPos = null
-  }
 }
 
 const onHeaderMouseUp = () => {
   isDragging.value = false
   dragState = null
-  flushPendingPos()
+  // 松手时把 transform 位移固化到 left/top，下次拖动从新位置开始
+  if (pendingPos) {
+    setAnchor(pendingPos.left, pendingPos.top)
+    pendingPos = null
+  }
   document.removeEventListener('mousemove', onHeaderMouseMove)
   document.removeEventListener('mouseup', onHeaderMouseUp)
 }
@@ -770,7 +756,8 @@ onMounted(() => {
   max-height: calc(100vh - 110px);
   display: flex;
   flex-direction: column;
-  will-change: left, top;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .study-card :deep(.el-card__header) {
@@ -799,6 +786,8 @@ onMounted(() => {
 .study-card.dragging {
   z-index: 1501;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  cursor: grabbing;
+  user-select: none;
 }
 
 .study-card.dragging .study-header {
