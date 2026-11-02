@@ -46,6 +46,33 @@
         </el-button>
       </div>
 
+      <!-- 按题号范围选题 -->
+      <div class="range-row">
+        <span class="range-label">按题号选题：</span>
+        <span class="range-text">第</span>
+        <el-input
+          v-model="rangeFrom"
+          type="number"
+          min="1"
+          :max="total || 1"
+          style="width: 96px"
+          placeholder="起始题号"
+        />
+        <span class="range-text">题 到 第</span>
+        <el-input
+          v-model="rangeTo"
+          type="number"
+          min="1"
+          :max="total || 1"
+          style="width: 96px"
+          placeholder="结束题号"
+        />
+        <span class="range-text">题</span>
+        <el-button size="small" @click="selectRange">选这批</el-button>
+        <el-button size="small" @click="selectAll">全选（{{ allIds.length }}）</el-button>
+        <span class="range-hint">当前筛选共 {{ total }} 道题，题号即下方列表顺序</span>
+      </div>
+
       <div class="stats-row">
         <span>共 {{ total }} 道题目</span>
         <span v-if="selectedQuestions.length > 0">已选择 {{ selectedQuestions.length }} 道</span>
@@ -74,6 +101,17 @@
           暂无符合条件的题目
         </div>
       </div>
+
+      <el-pagination
+        v-if="total > pageSize"
+        v-model:current-page="page"
+        class="pager"
+        background
+        layout="prev, pager, next, jumper, total"
+        :page-size="pageSize"
+        :total="total"
+        @current-change="loadQuestions"
+      />
 
       <div class="action-row">
         <el-button @click="selectAll">全选</el-button>
@@ -104,12 +142,12 @@
           title="按住标题栏可拖动窗口，双击标题栏复位"
           @dblclick="resetCardPosition"
         >
-          <span>学习进度：{{ currentIndex + 1 }} / {{ studyQuestions.length }}</span>
+          <span>学习进度：{{ currentIndex + 1 }} / {{ studyIds.length }}</span>
           <div class="study-actions">
             <el-button size="small" @click="prevQuestion" :disabled="currentIndex === 0">
               上一题
             </el-button>
-            <el-button size="small" @click="nextQuestion" :disabled="currentIndex === studyQuestions.length - 1">
+            <el-button size="small" @click="nextQuestion" :disabled="currentIndex === studyIds.length - 1">
               下一题
             </el-button>
             <el-button size="small" type="danger" @click="exitStudy">
@@ -119,8 +157,9 @@
         </div>
       </template>
 
-      <div class="study-content" v-loading="questionLoading">
-        <div v-if="currentQuestion" class="question-card">
+      <div class="study-content" v-loading="detailLoading">
+        <div v-if="!currentQuestion" class="loading-tip">题目加载中…</div>
+        <div v-else class="question-card">
           <!-- 题目类型 -->
           <div class="question-type">
             <el-tag :type="getTypeTag(currentQuestion.type)">
@@ -189,7 +228,7 @@
           <!-- 下一题按钮（显示答案后） -->
           <div v-if="answerRevealed" class="next-hint">
             <el-button type="primary" @click="nextQuestion">
-              {{ currentIndex < studyQuestions.length - 1 ? '下一题' : '学习完成' }}
+              {{ currentIndex < studyIds.length - 1 ? '下一题' : '学习完成' }}
               <el-icon><ArrowRight /></el-icon>
             </el-button>
           </div>
@@ -213,7 +252,7 @@
     <el-dialog v-model="showCompleteDialog" title="学习完成" width="400px" center>
       <div class="complete-content">
         <el-icon class="complete-icon" color="#67C23A"><CircleCheckFilled /></el-icon>
-        <p>恭喜！你已完成 {{ studyQuestions.length }} 道题目的学习</p>
+        <p>恭喜！你已完成 {{ studyIds.length }} 道题目的学习</p>
       </div>
       <template #footer>
         <el-button type="primary" @click="continueStudy">继续学习</el-button>
@@ -224,7 +263,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, QuestionFilled, ArrowRight, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import request from '@/api/index'
@@ -233,9 +272,17 @@ import ImagePreview from '@/components/ImagePreview.vue'
 
 const loading = ref(false)
 const questionLoading = ref(false)
+const detailLoading = ref(false)
 const questions = ref([])
 const total = ref(0)
 const categories = ref([])
+
+// 列表分页 + 当前筛选下的全部题目 id（题号即 allIds 的下标+1）
+const page = ref(1)
+const pageSize = 100
+const allIds = ref([])
+const rangeFrom = ref('')
+const rangeTo = ref('')
 
 // 分类分组
 const morphologyCategories = computed(() => {
@@ -253,9 +300,15 @@ const selectedQuestions = ref([])
 
 // 学习相关
 const studying = ref(false)
-const studyQuestions = ref([])
+// 题目详情懒加载：先只拿 id，翻到哪题再取哪题的详情，
+// 这样一次选 1000 多道题也能秒开。
+const studyIds = ref([])
+const studyDetails = reactive({})
 const currentIndex = ref(0)
-const currentQuestion = ref(null)
+const currentQuestion = computed(() => {
+  const id = studyIds.value[currentIndex.value]
+  return id ? studyDetails[id] || null : null
+})
 const answerRevealed = ref(false)
 const showCompleteDialog = ref(false)
 
@@ -369,24 +422,22 @@ const handleStemImageClick = (e) => {
   previewVisible.value = true
 }
 
-// 加载题目列表
+// 当前筛选条件（列表和"全部 id"共用，保证题号对得上）
+const buildFilterParams = () => {
+  const params = { type: filterType.value }
+  if (filterCategory.value) params.category = filterCategory.value
+  if (searchKeyword.value) params.search = searchKeyword.value
+  return params
+}
+
+// 加载题目列表（分页）
 const loadQuestions = async () => {
   loading.value = true
   try {
     const params = {
-      skip: 0,
-      limit: 100,
-      type: filterType.value,
-    }
-    // 处理分类筛选：形态学/ 表示筛选所有形态学分类
-    if (filterCategory.value === '形态学/') {
-      // 形态学父级筛选，由后端处理
-      params.category = '形态学/'
-    } else if (filterCategory.value) {
-      params.category = filterCategory.value
-    }
-    if (searchKeyword.value) {
-      params.search = searchKeyword.value
+      ...buildFilterParams(),
+      skip: (page.value - 1) * pageSize,
+      limit: pageSize,
     }
     const res = await request.get('/questions/study', { params })
     questions.value = res.items || []
@@ -396,6 +447,17 @@ const loadQuestions = async () => {
     ElMessage.error('加载题目失败')
   } finally {
     loading.value = false
+  }
+}
+
+// 加载当前筛选条件下的全部题目 id（顺序与列表一致）
+const loadAllIds = async () => {
+  try {
+    const res = await request.get('/questions/study/ids', { params: buildFilterParams() })
+    allIds.value = res.ids || []
+  } catch (e) {
+    console.error('加载题目编号失败', e)
+    allIds.value = []
   }
 }
 
@@ -419,7 +481,11 @@ const loadCategories = async () => {
 // 搜索
 const handleSearch = () => {
   selectedQuestions.value = []
+  page.value = 1
+  rangeFrom.value = ''
+  rangeTo.value = ''
   loadQuestions()
+  loadAllIds()
 }
 
 // 切换题目选中状态
@@ -432,16 +498,45 @@ const toggleQuestion = (id) => {
   }
 }
 
-// 全选
+// 全选（选中当前筛选下的全部题目，不只是当前这一页）
 const selectAll = () => {
-  selectedQuestions.value = questions.value.map(q => q.id)
+  if (!allIds.value.length) {
+    ElMessage.warning('没有可选择的题目')
+    return
+  }
+  selectedQuestions.value = [...allIds.value]
 }
 
-// 反选
+// 反选（对当前筛选下的全部题目取反）
 const selectReverse = () => {
-  selectedQuestions.value = questions.value
-    .filter(q => !selectedQuestions.value.includes(q.id))
-    .map(q => q.id)
+  if (!allIds.value.length) {
+    ElMessage.warning('没有可选择的题目')
+    return
+  }
+  const selected = new Set(selectedQuestions.value)
+  selectedQuestions.value = allIds.value.filter(id => !selected.has(id))
+}
+
+// 按题号范围选题：第 N 题 到 第 M 题（题号即列表顺序）
+const selectRange = () => {
+  const totalCount = allIds.value.length
+  if (!totalCount) {
+    ElMessage.warning('没有可选择的题目')
+    return
+  }
+  let from = parseInt(rangeFrom.value, 10)
+  let to = parseInt(rangeTo.value, 10)
+  if (!from && !to) {
+    ElMessage.warning('请填写起止题号')
+    return
+  }
+  if (!from) from = 1
+  if (!to) to = from
+  if (from > to) [from, to] = [to, from]
+  if (from < 1) from = 1
+  if (to > totalCount) to = totalCount
+  selectedQuestions.value = allIds.value.slice(from - 1, to)
+  ElMessage.success(`已选中第 ${from} - ${to} 题，共 ${selectedQuestions.value.length} 道`)
 }
 
 // 清空选择
@@ -469,6 +564,37 @@ const fetchStudyDetails = async (ids) => {
   return out
 }
 
+// 按列表顺序排一下选中的题目，保证学习顺序和题号一致
+const sortSelectedByListOrder = (ids) => {
+  const pos = new Map(allIds.value.map((id, i) => [id, i]))
+  return [...ids].sort((a, b) => {
+    const pa = pos.has(a) ? pos.get(a) : Number.MAX_SAFE_INTEGER
+    const pb = pos.has(b) ? pos.get(b) : Number.MAX_SAFE_INTEGER
+    return pa - pb
+  })
+}
+
+// 确保第 index 题（及后面几题）的详情已加载
+const ensureDetail = async (index, lookAhead = 8) => {
+  const need = []
+  const end = Math.min(index + lookAhead, studyIds.value.length)
+  for (let i = index; i < end; i++) {
+    const id = studyIds.value[i]
+    if (id && !studyDetails[id]) need.push(id)
+  }
+  if (!need.length) return
+  detailLoading.value = true
+  try {
+    const list = await fetchStudyDetails(need)
+    list.forEach((d) => { studyDetails[d.id] = d })
+  } catch (e) {
+    console.error('加载题目详情失败', e)
+    ElMessage.error('加载题目详情失败，请稍后重试')
+  } finally {
+    detailLoading.value = false
+  }
+}
+
 // 开始学习
 const startStudy = async () => {
   if (selectedQuestions.value.length === 0) {
@@ -476,25 +602,24 @@ const startStudy = async () => {
     return
   }
 
-  // 获取选中的题目详情
   questionLoading.value = true
+  detailLoading.value = true
   try {
-    const res = await fetchStudyDetails(selectedQuestions.value)
-    if (!res.length) {
-      ElMessage.error('没有加载到题目详情，请重试')
-      return
-    }
-    studyQuestions.value = res
+    studyIds.value = sortSelectedByListOrder(selectedQuestions.value)
+    Object.keys(studyDetails).forEach((k) => { delete studyDetails[k] })
     currentIndex.value = 0
-    currentQuestion.value = studyQuestions.value[0]
     answerRevealed.value = false
     studying.value = true
+    await nextTick()
+    // 只加载首屏几题的详情，翻到哪题再取哪题
+    await ensureDetail(0, 8)
     await initStudyPos()
   } catch (e) {
     console.error('加载题目详情失败', e)
     ElMessage.error('加载题目详情失败，请稍后重试')
   } finally {
     questionLoading.value = false
+    detailLoading.value = false
   }
 }
 
@@ -507,17 +632,17 @@ const revealAnswer = () => {
 const prevQuestion = () => {
   if (currentIndex.value > 0) {
     currentIndex.value--
-    currentQuestion.value = studyQuestions.value[currentIndex.value]
     answerRevealed.value = false
+    ensureDetail(currentIndex.value)
   }
 }
 
 // 下一题
 const nextQuestion = () => {
-  if (currentIndex.value < studyQuestions.value.length - 1) {
+  if (currentIndex.value < studyIds.value.length - 1) {
     currentIndex.value++
-    currentQuestion.value = studyQuestions.value[currentIndex.value]
     answerRevealed.value = false
+    ensureDetail(currentIndex.value)
   } else {
     // 学习完成
     showCompleteDialog.value = true
@@ -529,8 +654,8 @@ const continueStudy = () => {
   showCompleteDialog.value = false
   // 重新开始或继续
   currentIndex.value = 0
-  currentQuestion.value = studyQuestions.value[0]
   answerRevealed.value = false
+  ensureDetail(0, 8)
 }
 
 // 退出学习
@@ -540,9 +665,9 @@ const exitStudy = () => {
   isDragging.value = false
   pendingPos = null
   showCompleteDialog.value = false
-  studyQuestions.value = []
+  studyIds.value = []
+  Object.keys(studyDetails).forEach((k) => { delete studyDetails[k] })
   currentIndex.value = 0
-  currentQuestion.value = null
   answerRevealed.value = false
 }
 
@@ -702,12 +827,13 @@ const getTypeTag = (type) => {
 
 // 进度百分比
 const progressPercentage = computed(() => {
-  if (studyQuestions.value.length === 0) return 0
-  return Math.round(((currentIndex.value + 1) / studyQuestions.value.length) * 100)
+  if (studyIds.value.length === 0) return 0
+  return Math.round(((currentIndex.value + 1) / studyIds.value.length) * 100)
 })
 
 onMounted(() => {
   loadQuestions()
+  loadAllIds()
   loadCategories()
 })
 </script>
@@ -810,6 +936,43 @@ onMounted(() => {
   margin-top: 15px;
   display: flex;
   gap: 10px;
+}
+
+/* 题号范围行 */
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: #606266;
+}
+
+.range-label {
+  font-weight: 600;
+  color: #303133;
+}
+
+.range-text {
+  white-space: nowrap;
+}
+
+.range-hint {
+  color: #909399;
+  font-size: 13px;
+}
+
+.pager {
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+
+.loading-tip {
+  padding: 40px 0;
+  text-align: center;
+  color: #909399;
+  font-size: 14px;
 }
 
 /* 选项样式 */

@@ -117,7 +117,11 @@ def fill_answer_matches(given: str, standard: str) -> bool:
     return False
 
 
-def get_questions(db: Session, skip=0, limit=100, q_type="", search="", category=""):
+def _questions_filter(db: Session, q_type="", search="", category=""):
+    """题目的公共筛选条件。
+
+    列表和"按题号取 id"共用同一套条件，保证题号编号和列表顺序完全一致。
+    """
     q = db.query(models.Question)
     # 过滤掉系统分类占位题目（内容以[SYSTEM_CATEGORY]开头）
     q = q.filter(~models.Question.content.startswith("<p>[SYSTEM_CATEGORY]"))
@@ -136,8 +140,25 @@ def get_questions(db: Session, skip=0, limit=100, q_type="", search="", category
                 (models.Question.category == category) |
                 (models.Question.category.like(f"{category}/%"))
             )
+    return q
+
+
+def get_questions(db: Session, skip=0, limit=100, q_type="", search="", category=""):
+    q = _questions_filter(db, q_type=q_type, search=search, category=category)
     total = q.count()
     return q.order_by(models.Question.id.desc()).offset(skip).limit(limit).all(), total
+
+
+def get_question_ids(db: Session, q_type="", search="", category="", limit=20000):
+    """按列表同样的顺序和筛选条件返回题目 id。
+
+    考生自学里的"全选"和"第 N 题到第 M 题"都靠它，
+    顺序与 /study 列表一致，所以题号不会对不上。
+    """
+    q = _questions_filter(db, q_type=q_type, search=search, category=category)
+    # 只取 id 列，不把 content 整列拉回来（上千道题时差别很大）
+    rows = q.with_entities(models.Question.id).order_by(models.Question.id.desc()).limit(limit).all()
+    return [r[0] for r in rows]
 
 def get_question(db: Session, question_id: int):
     return db.query(models.Question).filter(models.Question.id == question_id).first()

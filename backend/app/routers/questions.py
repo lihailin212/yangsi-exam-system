@@ -56,20 +56,13 @@ def study_questions(
     limit: int = 100,
     type: str = "",
     category: str = "",
+    search: str = "",
     db: Session = Depends(get_db),
     _=Depends(get_current_user)
 ):
     """获取用于自学的题目（不包含答案）"""
-    # 处理形态学父级筛选
-    if category == "形态学/":
-        # 筛选所有形态学分类的题目
-        query = db.query(models.Question).filter(models.Question.category.like('形态学/%'))
-        if type:
-            query = query.filter(models.Question.type == type)
-        total = query.count()
-        items = query.offset(skip).limit(limit).all()
-    else:
-        items, total = crud.get_questions(db, skip=skip, limit=limit, q_type=type, search="", category=category)
+    # 列表筛选和排序统一走 crud，题号编号（/study/ids）与列表完全一致
+    items, total = crud.get_questions(db, skip=skip, limit=limit, q_type=type, search=search, category=category)
 
     # 移除答案和解析，只返回题目信息
     result = []
@@ -82,6 +75,23 @@ def study_questions(
             "category": q.category,
         })
     return {"items": result, "total": total}
+
+# 考生自学 - 取当前筛选条件下的全部题目 id（全选、按题号范围选题用）
+@router.get("/study/ids")
+def study_question_ids(
+    type: str = "",
+    category: str = "",
+    search: str = "",
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user)
+):
+    """返回当前筛选条件下的全部题目 id。
+
+    顺序与 /study 列表一致，所以"第 N 题"就是列表里的第 N 道。
+    """
+    ids = crud.get_question_ids(db, q_type=type, search=search, category=category)
+    return {"ids": ids, "total": len(ids)}
+
 
 # 获取单题详情（包含答案和解析，用于自学时点击查看）
 @router.get("/study/{question_id}")
