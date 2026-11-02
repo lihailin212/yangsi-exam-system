@@ -121,13 +121,26 @@
           </div>
 
           <!-- 题干 -->
-          <div class="question-stem" v-html="currentQuestion.content"></div>
+          <div class="question-stem" v-html="currentQuestion.content" @click="handleStemImageClick"></div>
 
-          <!-- 备选答案（学习模式下不显示选项，展示学习提示） -->
+          <!-- 备选答案 -->
+          <div v-if="hasOptions" class="options-area">
+            <div
+              v-for="(val, key) in parsedOptions"
+              :key="key"
+              class="option-item"
+              :class="{ correct: answerRevealed && isCorrectOption(key) }"
+            >
+              <span class="option-key">{{ key }}</span>
+              <span class="option-val" v-html="val"></span>
+            </div>
+          </div>
+
+          <!-- 学习提示（点击后显示答案和解析） -->
           <div class="options-placeholder" @click="revealAnswer">
             <div class="placeholder-hint">
               <el-icon><QuestionFilled /></el-icon>
-              <span>点击此处查看答案和解析</span>
+              <span>{{ answerRevealed ? '答案和解析已显示' : '点击此处查看答案和解析' }}</span>
             </div>
           </div>
 
@@ -164,6 +177,9 @@
       </div>
     </el-card>
 
+    <!-- 图片预览 -->
+    <ImagePreview v-model="previewVisible" :src="previewSrc" title="题目图片" />
+
     <!-- 学习完成对话框 -->
     <el-dialog v-model="showCompleteDialog" title="学习完成" width="400px" center>
       <div class="complete-content">
@@ -184,6 +200,7 @@ import { ElMessage } from 'element-plus'
 import { Search, QuestionFilled, ArrowRight, CircleCheckFilled } from '@element-plus/icons-vue'
 import request from '@/api/index'
 import { getCategories } from '@/api/questions'
+import ImagePreview from '@/components/ImagePreview.vue'
 
 const loading = ref(false)
 const questionLoading = ref(false)
@@ -212,6 +229,18 @@ const currentIndex = ref(0)
 const currentQuestion = ref(null)
 const answerRevealed = ref(false)
 const showCompleteDialog = ref(false)
+
+// 图片预览
+const previewVisible = ref(false)
+const previewSrc = ref('')
+
+// 点击题干里的图片打开预览
+const handleStemImageClick = (e) => {
+  const img = e.target.closest('img')
+  if (!img || !img.src) return
+  previewSrc.value = img.src
+  previewVisible.value = true
+}
 
 // 加载题目列表
 const loadQuestions = async () => {
@@ -393,6 +422,29 @@ const formatAnswer = (q) => {
   return q.answer
 }
 
+// 当前题目的选项
+const parsedOptions = computed(() => {
+  try {
+    const obj = JSON.parse(currentQuestion.value?.options || '{}')
+    return obj && typeof obj === 'object' ? obj : {}
+  } catch (e) {
+    return {}
+  }
+})
+
+// 是否有可展示的选项
+const hasOptions = computed(() => Object.keys(parsedOptions.value).length > 0)
+
+// 正确答案集合
+const answerKeys = computed(() => {
+  const ans = currentQuestion.value?.answer
+  if (!ans) return []
+  return String(ans).split(',').map(a => a.trim()).filter(a => a)
+})
+
+// 该选项是否为正确答案
+const isCorrectOption = (key) => answerKeys.value.includes(String(key))
+
 // 获取类型名称
 const getTypeName = (type) => {
   const map = { single: '单选题', multiple: '多选题', judgment: '判断题', fill: '填空题' }
@@ -517,10 +569,88 @@ onMounted(() => {
   gap: 10px;
 }
 
+/* 选项样式 */
+.options-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.option-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 15px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background-color: #ffffff;
+  transition: all 0.3s;
+}
+
+.option-item.correct {
+  border-color: #67c23a;
+  background-color: #f0f9eb;
+}
+
+.option-item.wrong {
+  border-color: #f56c6c;
+  background-color: #fef0f0;
+}
+
+.option-key {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  line-height: 26px;
+  text-align: center;
+  border-radius: 50%;
+  background-color: #f0f2f5;
+  color: #606266;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.option-item.correct .option-key {
+  background-color: #67c23a;
+  color: #fff;
+}
+
+.option-item.wrong .option-key {
+  background-color: #f56c6c;
+  color: #fff;
+}
+
+.option-val {
+  flex: 1;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #303133;
+  word-break: break-word;
+}
+
+.option-val :deep(img) {
+  max-width: 100%;
+  height: auto;
+}
+
 /* 学习模式样式 */
 .study-card {
   max-width: 800px;
   margin: 0 auto;
+  max-height: calc(100vh - 110px);
+  display: flex;
+  flex-direction: column;
+}
+
+.study-card :deep(.el-card__header) {
+  flex-shrink: 0;
+}
+
+.study-card :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .study-header {
