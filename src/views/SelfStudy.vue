@@ -96,12 +96,12 @@
       class="study-card"
       :class="{ dragging: isDragging }"
       :style="studyCardStyle"
+      @mousedown="onHeaderMouseDown"
     >
       <template #header>
         <div
           class="study-header"
           title="按住标题栏可拖动窗口，双击标题栏复位"
-          @mousedown="onHeaderMouseDown"
           @dblclick="resetCardPosition"
         >
           <span>学习进度：{{ currentIndex + 1 }} / {{ studyQuestions.length }}</span>
@@ -255,14 +255,28 @@ const studyCardStyle = computed(() => ({
 // 按住标题栏拖动窗口
 const onHeaderMouseDown = (e) => {
   if (e.button !== 0) return
+  // 只有按住卡片顶部标题栏才拖动，题干/选项区域照常点选
+  if (!e.target.closest('.el-card__header')) return
   // 标题栏里的按钮不触发拖动
   if (e.target.closest('button')) return
+  const el = studyCardRef.value?.$el || studyCardRef.value
+  const rect = el?.getBoundingClientRect?.()
+  if (!rect) return
+
   isDragging.value = true
   dragState = {
     startX: e.clientX,
     startY: e.clientY,
     baseX: cardOffset.value.x,
     baseY: cardOffset.value.y,
+    // 用「未拖动时」的位置算边界，不能用当前带 transform 的位置，
+    // 否则每拖一次边界就往里缩一次，拖到某个位置后再也拖不动了。
+    bounds: {
+      minX: -(rect.right - cardOffset.value.x - 120),
+      maxX: window.innerWidth - (rect.left - cardOffset.value.x) - 120,
+      minY: -(rect.bottom - cardOffset.value.y - 80),
+      maxY: window.innerHeight - (rect.top - cardOffset.value.y) - 60,
+    },
   }
   document.addEventListener('mousemove', onHeaderMouseMove)
   document.addEventListener('mouseup', onHeaderMouseUp)
@@ -271,19 +285,15 @@ const onHeaderMouseDown = (e) => {
 
 const onHeaderMouseMove = (e) => {
   if (!dragState) return
-  const el = studyCardRef.value?.$el || studyCardRef.value
-  const rect = el?.getBoundingClientRect?.()
-  let x = dragState.baseX + (e.clientX - dragState.startX)
-  let y = dragState.baseY + (e.clientY - dragState.startY)
-  // 别把窗口拖出屏幕，留一部分在可视区域内
-  if (rect) {
-    const minX = -(rect.right - 120)
-    const maxX = window.innerWidth - rect.left - 120
-    const minY = -(rect.bottom - 80)
-    const maxY = window.innerHeight - rect.top - 60
-    x = Math.min(Math.max(x, minX), maxX)
-    y = Math.min(Math.max(y, minY), maxY)
-  }
+  const b = dragState.bounds
+  const x = Math.min(
+    Math.max(dragState.baseX + (e.clientX - dragState.startX), b.minX),
+    b.maxX
+  )
+  const y = Math.min(
+    Math.max(dragState.baseY + (e.clientY - dragState.startY), b.minY),
+    b.maxY
+  )
   cardOffset.value = { x, y }
 }
 
@@ -728,6 +738,11 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  cursor: move;
+  user-select: none;
+}
+
+.study-card :deep(.el-card__header) {
   cursor: move;
   user-select: none;
 }
