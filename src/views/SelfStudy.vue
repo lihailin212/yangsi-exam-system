@@ -133,16 +133,34 @@
           <!-- 题干 -->
           <div class="question-stem" v-html="currentQuestion.content" @click="handleStemImageClick"></div>
 
+          <!-- 填空题：自己先填答案，再对照标准答案 -->
+          <div v-if="currentQuestion.type === 'fill'" class="fill-area">
+            <div class="fill-label">我的答案</div>
+            <el-input
+              v-model="fillAnswer"
+              type="textarea"
+              :rows="2"
+              maxlength="100"
+              placeholder="请填写图中所示的名称"
+            />
+            <div v-if="answerRevealed" class="fill-result" :class="fillResultClass">
+              <el-icon v-if="fillResultType === 'correct'"><CircleCheckFilled /></el-icon>
+              <el-icon v-else-if="fillResultType === 'wrong'"><CircleCloseFilled /></el-icon>
+              <span>{{ fillResultText }}</span>
+            </div>
+            <div v-else class="fill-tip">填好后点击下方「查看答案和解析」对照答案</div>
+          </div>
+
           <!-- 备选答案 -->
           <div v-if="hasOptions" class="options-area">
             <div
-              v-for="(val, key) in parsedOptions"
-              :key="key"
+              v-for="opt in optionList"
+              :key="opt.key"
               class="option-item"
-              :class="{ correct: answerRevealed && isCorrectOption(key) }"
+              :class="{ correct: answerRevealed && isCorrectOption(opt.key) }"
             >
-              <span class="option-key">{{ key }}</span>
-              <span class="option-val" v-html="val"></span>
+              <span class="option-key">{{ opt.key }}</span>
+              <span class="option-val" v-html="opt.label"></span>
             </div>
           </div>
 
@@ -207,7 +225,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, QuestionFilled, ArrowRight, CircleCheckFilled } from '@element-plus/icons-vue'
+import { Search, QuestionFilled, ArrowRight, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import request from '@/api/index'
 import { getCategories } from '@/api/questions'
 import ImagePreview from '@/components/ImagePreview.vue'
@@ -507,7 +525,7 @@ const exitStudy = () => {
 
 // 格式化答案显示
 const formatAnswer = (q) => {
-  if (!q.answer) return '未设置答案'
+  if (!q.answer) return '本题暂不显示标准答案'
 
   if (q.type === 'single' || q.type === 'judgment') {
     // 单选题或判断题，显示选项内容
@@ -544,8 +562,80 @@ const parsedOptions = computed(() => {
   }
 })
 
+// 要展示的选项列表
+// 判断题在题库里存的是空选项 + 「正确/错误」文本，这里转成两个可看的选项
+const optionList = computed(() => {
+  const q = currentQuestion.value
+  if (!q) return []
+  const entries = Object.entries(parsedOptions.value)
+  if (!entries.length) return []
+  const allBlank = entries.every(([, v]) => !String(v ?? '').trim())
+  if (q.type === 'judgment' && allBlank) {
+    return [
+      { key: 'A', label: '正确' },
+      { key: 'B', label: '错误' },
+    ]
+  }
+  return entries.map(([key, val]) => ({ key, label: val }))
+})
+
 // 是否有可展示的选项
-const hasOptions = computed(() => Object.keys(parsedOptions.value).length > 0)
+const hasOptions = computed(() => optionList.value.length > 0)
+
+// 填空题：考生自己填的答案（按题目 id 存，切题不丢）
+const studentAnswers = ref({})
+const fillAnswer = computed({
+  get: () => (currentQuestion.value ? studentAnswers.value[currentQuestion.value.id] || '' : ''),
+  set: (v) => {
+    if (currentQuestion.value) {
+      studentAnswers.value[currentQuestion.value.id] = v
+    }
+  },
+})
+
+// 文本归一化：去掉空格和常见标点，方便比对
+const normalizeText = (str) =>
+  String(str ?? '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[（）()【】\[\]，,。.、；;：:！!？?·\-—_"'"]/g, '')
+    .toLowerCase()
+
+// 填空题作答是否正确
+const isFillCorrect = computed(() => {
+  const q = currentQuestion.value
+  if (!q || q.type !== 'fill') return false
+  const user = normalizeText(fillAnswer.value)
+  if (!user) return false
+  const stdList = String(q.answer || '')
+    .split(/[|｜\/、;；]/)
+    .map(normalizeText)
+    .filter(Boolean)
+  if (!stdList.length) return false
+  return stdList.some((a) => a === user || (user.length >= 2 && a.includes(user)))
+})
+
+// 填空题批改结果
+const fillResultType = computed(() => {
+  if (!answerRevealed.value) return ''
+  if (!normalizeText(fillAnswer.value)) return 'none'
+  // 题目正在考试中时后端会清空标准答案，这时只记录作答，不判对错
+  if (!String(currentQuestion.value?.answer || '').trim()) return 'submitted'
+  return isFillCorrect.value ? 'correct' : 'wrong'
+})
+
+const fillResultText = computed(() => {
+  if (fillResultType.value === 'correct') return '回答正确'
+  if (fillResultType.value === 'wrong') return '回答不正确，正确答案见下方'
+  if (fillResultType.value === 'submitted') return '已作答，本题正在考试中，暂不显示标准答案'
+  return '未作答，正确答案见下方'
+})
+
+const fillResultClass = computed(() => ({
+  correct: fillResultType.value === 'correct',
+  wrong: fillResultType.value === 'wrong',
+  submitted: fillResultType.value === 'submitted',
+}))
 
 // 正确答案集合
 const answerKeys = computed(() => {
@@ -555,7 +645,25 @@ const answerKeys = computed(() => {
 })
 
 // 该选项是否为正确答案
-const isCorrectOption = (key) => answerKeys.value.includes(String(key))
+const isCorrectOption = (key) => {
+  const q = currentQuestion.value
+  if (!q) return false
+  if (q.type === 'judgment') {
+    // 判断题的标准答案是「正确/错误」文本，和选项文字比对
+    const label = optionList.value.find((o) => o.key === key)?.label
+    if (!label) return false
+    const ans = normalizeText(q.answer)
+    const lb = normalizeText(label)
+    if (ans === lb) return true
+    // 兼容「对/错」「T/F」这类写法
+    const truthy = ['正确', '对', 't', 'true', '是', 'y', 'yes']
+    const falsy = ['错误', '错', 'f', 'false', '否', 'n', 'no']
+    if (truthy.includes(lb)) return truthy.includes(ans)
+    if (falsy.includes(lb)) return falsy.includes(ans)
+    return false
+  }
+  return answerKeys.value.includes(String(key))
+}
 
 // 获取类型名称
 const getTypeName = (type) => {
@@ -744,6 +852,49 @@ onMounted(() => {
 .option-val :deep(img) {
   max-width: 100%;
   height: auto;
+}
+
+/* 填空题作答区 */
+.fill-area {
+  margin-bottom: 20px;
+}
+
+.fill-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 8px;
+}
+
+.fill-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 8px;
+}
+
+.fill-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fill-result.correct {
+  color: #67c23a;
+}
+
+.fill-result.wrong {
+  color: #f56c6c;
+}
+
+.fill-result.submitted {
+  color: #909399;
+}
+
+.fill-result .el-icon {
+  font-size: 18px;
 }
 
 /* 学习模式样式 */
