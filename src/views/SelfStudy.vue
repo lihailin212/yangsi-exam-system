@@ -90,9 +90,20 @@
     </el-card>
 
     <!-- 学习模式 -->
-    <el-card v-else class="study-card">
+    <el-card
+      v-else
+      ref="studyCardRef"
+      class="study-card"
+      :class="{ dragging: isDragging }"
+      :style="studyCardStyle"
+    >
       <template #header>
-        <div class="study-header">
+        <div
+          class="study-header"
+          title="按住标题栏可拖动窗口，双击标题栏复位"
+          @mousedown="onHeaderMouseDown"
+          @dblclick="resetCardPosition"
+        >
           <span>学习进度：{{ currentIndex + 1 }} / {{ studyQuestions.length }}</span>
           <div class="study-actions">
             <el-button size="small" @click="prevQuestion" :disabled="currentIndex === 0">
@@ -229,6 +240,64 @@ const currentIndex = ref(0)
 const currentQuestion = ref(null)
 const answerRevealed = ref(false)
 const showCompleteDialog = ref(false)
+
+// 学习窗口拖动
+const studyCardRef = ref(null)
+const isDragging = ref(false)
+const cardOffset = ref({ x: 0, y: 0 })
+let dragState = null
+
+const studyCardStyle = computed(() => ({
+  transform: `translate(${cardOffset.value.x}px, ${cardOffset.value.y}px)`,
+  zIndex: isDragging.value ? 30 : 10,
+}))
+
+// 按住标题栏拖动窗口
+const onHeaderMouseDown = (e) => {
+  if (e.button !== 0) return
+  // 标题栏里的按钮不触发拖动
+  if (e.target.closest('button')) return
+  isDragging.value = true
+  dragState = {
+    startX: e.clientX,
+    startY: e.clientY,
+    baseX: cardOffset.value.x,
+    baseY: cardOffset.value.y,
+  }
+  document.addEventListener('mousemove', onHeaderMouseMove)
+  document.addEventListener('mouseup', onHeaderMouseUp)
+  e.preventDefault()
+}
+
+const onHeaderMouseMove = (e) => {
+  if (!dragState) return
+  const el = studyCardRef.value?.$el || studyCardRef.value
+  const rect = el?.getBoundingClientRect?.()
+  let x = dragState.baseX + (e.clientX - dragState.startX)
+  let y = dragState.baseY + (e.clientY - dragState.startY)
+  // 别把窗口拖出屏幕，留一部分在可视区域内
+  if (rect) {
+    const minX = -(rect.right - 120)
+    const maxX = window.innerWidth - rect.left - 120
+    const minY = -(rect.bottom - 80)
+    const maxY = window.innerHeight - rect.top - 60
+    x = Math.min(Math.max(x, minX), maxX)
+    y = Math.min(Math.max(y, minY), maxY)
+  }
+  cardOffset.value = { x, y }
+}
+
+const onHeaderMouseUp = () => {
+  isDragging.value = false
+  dragState = null
+  document.removeEventListener('mousemove', onHeaderMouseMove)
+  document.removeEventListener('mouseup', onHeaderMouseUp)
+}
+
+// 双击标题栏复位到原位
+const resetCardPosition = () => {
+  cardOffset.value = { x: 0, y: 0 }
+}
 
 // 图片预览
 const previewVisible = ref(false)
@@ -386,6 +455,8 @@ const continueStudy = () => {
 // 退出学习
 const exitStudy = () => {
   studying.value = false
+  cardOffset.value = { x: 0, y: 0 }
+  isDragging.value = false
   showCompleteDialog.value = false
   studyQuestions.value = []
   currentIndex.value = 0
@@ -657,6 +728,16 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  cursor: move;
+  user-select: none;
+}
+
+.study-card.dragging {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.study-card.dragging .study-header {
+  cursor: grabbing;
 }
 
 .study-actions {
