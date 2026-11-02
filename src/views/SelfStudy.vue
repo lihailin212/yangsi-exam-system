@@ -82,6 +82,7 @@
         <el-button
           type="primary"
           :disabled="selectedQuestions.length === 0"
+          :loading="questionLoading"
           @click="startStudy"
         >
           开始学习 ({{ selectedQuestions.length }})
@@ -448,6 +449,26 @@ const clearSelection = () => {
   selectedQuestions.value = []
 }
 
+// 批量取题目详情：优先一次请求搞定，后端不支持时退化为小批量并发
+const fetchStudyDetails = async (ids) => {
+  try {
+    const res = await request.post('/questions/study/batch', { ids }, { silent: true })
+    if (Array.isArray(res)) return res
+  } catch (e) {
+    console.warn('批量获取题目详情失败，改用逐题获取', e)
+  }
+  // 退路：每批 5 个并发，避免把后端打爆
+  const out = []
+  const size = 5
+  for (let i = 0; i < ids.length; i += size) {
+    const part = await Promise.all(
+      ids.slice(i, i + size).map(id => request.get(`/questions/study/${id}`, { silent: true }))
+    )
+    out.push(...part)
+  }
+  return out
+}
+
 // 开始学习
 const startStudy = async () => {
   if (selectedQuestions.value.length === 0) {
@@ -458,9 +479,11 @@ const startStudy = async () => {
   // 获取选中的题目详情
   questionLoading.value = true
   try {
-    const res = await Promise.all(
-      selectedQuestions.value.map(id => request.get(`/questions/study/${id}`))
-    )
+    const res = await fetchStudyDetails(selectedQuestions.value)
+    if (!res.length) {
+      ElMessage.error('没有加载到题目详情，请重试')
+      return
+    }
     studyQuestions.value = res
     currentIndex.value = 0
     currentQuestion.value = studyQuestions.value[0]
@@ -469,7 +492,7 @@ const startStudy = async () => {
     await initStudyPos()
   } catch (e) {
     console.error('加载题目详情失败', e)
-    ElMessage.error('加载题目详情失败')
+    ElMessage.error('加载题目详情失败，请稍后重试')
   } finally {
     questionLoading.value = false
   }

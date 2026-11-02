@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
 from .. import crud, schemas, models
@@ -116,6 +117,58 @@ def study_question_detail(
             result["answer"] = ""
             result["analysis"] = ""
     return result
+
+class StudyBatchIn(BaseModel):
+    """批量取题目的入参"""
+    ids: list[int] = Field(default_factory=list)
+
+
+@router.post("/study/batch")
+def study_questions_batch(
+    payload: StudyBatchIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """批量获取题目详情（自学用）。
+
+    一次请求返回多道题，避免选 100 道题时并发 100 个请求把后端打爆。
+    规则与单题详情一致：题目正在考试中时，对考生隐藏答案和解析。
+    """
+    ids = payload.ids or []
+    if not ids:
+        return []
+    # 去重并保序
+    ordered_ids = list(dict.fromkeys(ids))
+    items = db.query(models.Question).filter(models.Question.id.in_(ordered_ids)).all()
+    order = {qid: i for i, qid in enumerate(ordered_ids)}
+    items.sort(key=lambda q: order.get(q.id, 0))
+
+    # 正在考试中的题目不对考生公开答案
+    hidden = set()
+    if not current_user.is_admin:
+        now = datetime.utcnow()
+        rows = db.query(models.exam_question.c.question_id).join(
+            models.Exam, models.exam_question.c.exam_id == models.Exam.id
+        ).filter(
+            models.exam_question.c.question_id.in_(ordered_ids),
+            models.Exam.start_time <= now,
+            models.Exam.end_time >= now
+        ).all()
+        hidden = {r[0] for r in rows}
+
+    result = []
+    for q in items:
+        result.append({
+            "id": q.id,
+            "type": q.type,
+            "content": q.content,
+            "options": q.options,
+            "answer": "" if q.id in hidden else q.answer,
+            "analysis": "" if q.id in hidden else q.analysis,
+            "category": q.category,
+        })
+    return result
+
 
 @router.post("", response_model=schemas.QuestionOut)
 def create_question(q_in: schemas.QuestionCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
