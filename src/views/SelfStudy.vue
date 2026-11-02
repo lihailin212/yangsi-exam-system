@@ -206,7 +206,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, QuestionFilled, ArrowRight, CircleCheckFilled } from '@element-plus/icons-vue'
 import request from '@/api/index'
@@ -242,15 +242,44 @@ const answerRevealed = ref(false)
 const showCompleteDialog = ref(false)
 
 // 学习窗口拖动
+// 用 position: fixed 做真正的浮动窗口：不会被页面滚动容器裁剪，
+// 拖到哪儿都能完整显示，标题栏也永远抓得到。
 const studyCardRef = ref(null)
 const isDragging = ref(false)
-const cardOffset = ref({ x: 0, y: 0 })
+const studyPos = ref({ left: 0, top: 0 })
 let dragState = null
 
 const studyCardStyle = computed(() => ({
-  transform: `translate(${cardOffset.value.x}px, ${cardOffset.value.y}px)`,
-  zIndex: isDragging.value ? 30 : 10,
+  position: 'fixed',
+  left: `${studyPos.value.left}px`,
+  top: `${studyPos.value.top}px`,
+  margin: '0',
+  zIndex: isDragging.value ? 1501 : 1500,
 }))
+
+// 进入学习模式后：先量出卡片在页面里的位置，再切换成浮动窗口
+const initStudyPos = async () => {
+  await nextTick()
+  const el = studyCardRef.value?.$el || studyCardRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  studyPos.value = { left: rect.left, top: rect.top }
+}
+
+// 双击标题栏：回到主区域居中位置
+const resetCardPosition = async () => {
+  const el = studyCardRef.value?.$el || studyCardRef.value
+  if (!el) return
+  const main = document.querySelector('.main-content')
+  const mainRect = main?.getBoundingClientRect()
+  const rect = el.getBoundingClientRect()
+  const areaLeft = mainRect ? mainRect.left : 0
+  const areaWidth = mainRect ? mainRect.width : window.innerWidth
+  studyPos.value = {
+    left: Math.max(areaLeft + 8, areaLeft + (areaWidth - rect.width) / 2),
+    top: (mainRect ? mainRect.top : 0) + 16,
+  }
+}
 
 // 按住标题栏拖动窗口
 const onHeaderMouseDown = (e) => {
@@ -260,23 +289,16 @@ const onHeaderMouseDown = (e) => {
   // 标题栏里的按钮不触发拖动
   if (e.target.closest('button')) return
   const el = studyCardRef.value?.$el || studyCardRef.value
-  const rect = el?.getBoundingClientRect?.()
-  if (!rect) return
+  if (!el) return
 
   isDragging.value = true
   dragState = {
     startX: e.clientX,
     startY: e.clientY,
-    baseX: cardOffset.value.x,
-    baseY: cardOffset.value.y,
-    // 用「未拖动时」的位置算边界，不能用当前带 transform 的位置，
-    // 否则每拖一次边界就往里缩一次，拖到某个位置后再也拖不动了。
-    bounds: {
-      minX: -(rect.right - cardOffset.value.x - 120),
-      maxX: window.innerWidth - (rect.left - cardOffset.value.x) - 120,
-      minY: -(rect.bottom - cardOffset.value.y - 80),
-      maxY: window.innerHeight - (rect.top - cardOffset.value.y) - 60,
-    },
+    baseLeft: studyPos.value.left,
+    baseTop: studyPos.value.top,
+    width: el.offsetWidth,
+    height: el.offsetHeight,
   }
   document.addEventListener('mousemove', onHeaderMouseMove)
   document.addEventListener('mouseup', onHeaderMouseUp)
@@ -285,16 +307,15 @@ const onHeaderMouseDown = (e) => {
 
 const onHeaderMouseMove = (e) => {
   if (!dragState) return
-  const b = dragState.bounds
-  const x = Math.min(
-    Math.max(dragState.baseX + (e.clientX - dragState.startX), b.minX),
-    b.maxX
-  )
-  const y = Math.min(
-    Math.max(dragState.baseY + (e.clientY - dragState.startY), b.minY),
-    b.maxY
-  )
-  cardOffset.value = { x, y }
+  const dx = e.clientX - dragState.startX
+  const dy = e.clientY - dragState.startY
+  // 始终给标题栏留出可抓取的位置，窗口不会被拖到完全抓不到的地方
+  const maxLeft = Math.max(0, window.innerWidth - 140)
+  const maxTop = Math.max(0, window.innerHeight - 60)
+  studyPos.value = {
+    left: Math.min(Math.max(dragState.baseLeft + dx, 0), maxLeft),
+    top: Math.min(Math.max(dragState.baseTop + dy, 0), maxTop),
+  }
 }
 
 const onHeaderMouseUp = () => {
@@ -302,11 +323,6 @@ const onHeaderMouseUp = () => {
   dragState = null
   document.removeEventListener('mousemove', onHeaderMouseMove)
   document.removeEventListener('mouseup', onHeaderMouseUp)
-}
-
-// 双击标题栏复位到原位
-const resetCardPosition = () => {
-  cardOffset.value = { x: 0, y: 0 }
 }
 
 // 图片预览
@@ -419,6 +435,7 @@ const startStudy = async () => {
     currentQuestion.value = studyQuestions.value[0]
     answerRevealed.value = false
     studying.value = true
+    await initStudyPos()
   } catch (e) {
     console.error('加载题目详情失败', e)
     ElMessage.error('加载题目详情失败')
@@ -465,7 +482,7 @@ const continueStudy = () => {
 // 退出学习
 const exitStudy = () => {
   studying.value = false
-  cardOffset.value = { x: 0, y: 0 }
+  studyPos.value = { left: 0, top: 0 }
   isDragging.value = false
   showCompleteDialog.value = false
   studyQuestions.value = []
@@ -717,8 +734,8 @@ onMounted(() => {
 
 /* 学习模式样式 */
 .study-card {
-  max-width: 800px;
-  margin: 0 auto;
+  width: 800px;
+  max-width: calc(100vw - 24px);
   max-height: calc(100vh - 110px);
   display: flex;
   flex-direction: column;
