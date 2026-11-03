@@ -277,7 +277,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, QuestionFilled, ArrowRight, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import request from '@/api/index'
@@ -348,6 +348,26 @@ const setAnchor = (left, top) => {
   studyPos.value = { left, top }
 }
 
+// 把学习窗口夹进屏幕内：高度不超过屏幕、底边不超出可视区
+// （否则底部按钮会跑到屏幕外，得滚动页面才够得到）
+const clampCardToViewport = () => {
+  const el = getCardEl()
+  if (!el) return
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+  const maxH = Math.max(240, vh - 24)
+  el.style.maxHeight = `${maxH}px`
+  const h = el.offsetHeight
+  const w = el.offsetWidth
+  let top = studyPos.value.top
+  let left = studyPos.value.left
+  if (top + h > vh - 12) top = Math.max(12, vh - 12 - h)
+  if (left + w > vw - 12) left = Math.max(12, vw - 12 - w)
+  studyPos.value = { left, top }
+  el.style.left = `${Math.round(left)}px`
+  el.style.top = `${Math.round(top)}px`
+}
+
 // 进入学习模式后：先量出卡片在页面里的位置，再切换成浮动窗口
 const initStudyPos = async () => {
   await nextTick()
@@ -355,6 +375,7 @@ const initStudyPos = async () => {
   if (!el) return
   const rect = el.getBoundingClientRect()
   setAnchor(rect.left, rect.top)
+  clampCardToViewport()
 }
 
 // 双击标题栏：回到主区域居中位置
@@ -601,6 +622,8 @@ const ensureDetail = async (index, lookAhead = 8) => {
   try {
     const list = await fetchStudyDetails(need)
     list.forEach((d) => { studyDetails[d.id] = d })
+    await nextTick()
+    clampCardToViewport()
   } catch (e) {
     console.error('加载题目详情失败', e)
     ElMessage.error('加载题目详情失败，请稍后重试')
@@ -920,6 +943,11 @@ onMounted(() => {
   loadQuestions()
   loadAllIds()
   loadCategories()
+  window.addEventListener('resize', clampCardToViewport)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', clampCardToViewport)
 })
 </script>
 
@@ -1236,7 +1264,6 @@ onMounted(() => {
   z-index: 1500;
   width: 800px;
   max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 110px);
   display: flex;
   flex-direction: column;
   will-change: transform;
@@ -1308,7 +1335,10 @@ onMounted(() => {
 
 .question-stem :deep(img) {
   max-width: 100%;
+  /* 图片再大也不超过这个高度，保证选项和底部按钮一屏放得下 */
+  max-height: 32vh;
   height: auto;
+  object-fit: contain;
   margin: 10px 0;
 }
 
@@ -1411,8 +1441,13 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   gap: 12px;
+  /* 吸在窗口底部：题目再长再高，不用滚动就能点到按钮 */
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   margin-top: 20px;
-  padding-top: 18px;
+  padding: 12px 0;
+  background-color: #ffffff;
   border-top: 1px solid #ebeef5;
 }
 
