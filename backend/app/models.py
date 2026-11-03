@@ -37,6 +37,16 @@ class User(Base):
     is_active = Column(Boolean, default=True)  # 账号是否启用
     # 初始密码还没改过：这类账号登录后只能改密码，其余接口一律挡住
     must_change_password = Column(Boolean, default=False)
+    # 手机号：自助注册用户的登录标识。工号账号可以为空。
+    phone = Column(String, index=True)
+    # 所属机构（null = 待分配池，等超管/机构管理员拉入）
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    # 机构内角色："" 普通 / "member" 学员 / "admin" 机构管理员
+    org_role = Column(String, default="")
+    # 试用期到期时间。付费单位是机构，个人只有试用期，不是订阅。
+    trial_expires_at = Column(DateTime, nullable=True)
+    # 注册来源：admin=后台创建 / self=自助注册
+    registered_via = Column(String, default="admin")
     created_at = Column(DateTime, default=datetime.utcnow)
     records = relationship("ExamRecord", back_populates="user")
 
@@ -238,3 +248,96 @@ class ArenaLog(Base):
     detail = Column(Text, default="")  # 详细信息JSON
     timestamp = Column(DateTime, default=datetime.utcnow)
     arena = relationship("Arena", back_populates="logs")
+
+
+class Organization(Base):
+    """机构（付费单位）。
+
+    机构买「席位名额 + 有效期」套餐，机构订阅到期则院内学员全部失效。
+    个人只有试用期，不单独购买。
+    """
+    __tablename__ = "organizations"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    invite_code = Column(String, unique=True, index=True)  # 学员自助注册时填的邀请码
+    contact_name = Column(String, default="")
+    contact_phone = Column(String, default="")
+    seat_limit = Column(Integer, default=0)                # 名额（账号总数配额）
+    subscription_expires_at = Column(DateTime, nullable=True)  # 机构订阅到期时间（UTC naive）
+    subscription_plan_code = Column(String, default="")      # 最近一次开通的套餐编码
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SubscriptionPlan(Base):
+    """机构套餐：席位数 + 有效期 + 价格。"""
+    __tablename__ = "subscription_plans"
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True)
+    name = Column(String)
+    seat_limit = Column(Integer, default=20)      # 包含的席位数
+    duration_days = Column(Integer, default=30)   # 有效期天数
+    price_cents = Column(Integer, default=0)      # 价格，单位：分
+    description = Column(Text, default="")
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RedemptionCode(Base):
+    """兑换码：管理员批量生成，学员在订阅页输入即可给所在机构续期。
+
+    organization_id 为空表示通用码，任何机构都能兑；不为空则只有该机构学员能兑。
+    明文存储是为了让管理员能批量导出后直接发给学员（与 license key 同款做法）。
+    """
+    __tablename__ = "redemption_codes"
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=True)
+    plan_name = Column(String, default="")
+    duration_days = Column(Integer, default=0)
+    seat_limit = Column(Integer, default=0)
+    amount_cents = Column(Integer, default=0)
+    batch_no = Column(String, default="", index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+    used_by_org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    used_at = Column(DateTime, nullable=True)
+    status = Column(String, default="unused")  # unused / used / void
+
+
+class PaymentOrder(Base):
+    """开通记录（所有渠道的开通都落一单，便于对账与将来接微信支付回调）。"""
+    __tablename__ = "payment_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    order_no = Column(String, unique=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # 操作人
+    plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=True)
+    plan_name = Column(String, default="")
+    seat_limit = Column(Integer, default=0)
+    duration_days = Column(Integer, default=0)
+    amount_cents = Column(Integer, default=0)
+    channel = Column(String, default="manual")   # manual / redemption_code / wechat
+    status = Column(String, default="paid")       # pending / paid / refunded / failed
+    provider_txn_id = Column(String, default="", index=True)
+    operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    paid_at = Column(DateTime, nullable=True)
+    note = Column(Text, default="")
+
+
+class SmsCode(Base):
+    """短信验证码（手机号验证码登录预留）。"""
+    __tablename__ = "sms_codes"
+    id = Column(Integer, primary_key=True, index=True)
+    phone = Column(String, index=True)
+    code = Column(String)
+    purpose = Column(String, default="login")  # login / register
+    expires_at = Column(DateTime, nullable=True)
+    used = Column(Boolean, default=False)
+    sent_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)

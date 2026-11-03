@@ -18,6 +18,17 @@
         <el-select v-model="filterDept" placeholder="科室" clearable style="width:140px" @change="loadData">
           <el-option v-for="d in depts" :key="d" :label="d" :value="d" />
         </el-select>
+        <el-select
+          v-if="authStore.isAdmin"
+          v-model="filterOrg"
+          placeholder="所属机构"
+          clearable
+          style="width:160px"
+          @change="loadData"
+        >
+          <el-option label="未分配" :value="-1" />
+          <el-option v-for="o in orgs" :key="o.id" :label="o.name" :value="o.id" />
+        </el-select>
       </div>
 
       <el-table :data="tableData" v-loading="loading" style="width:100%;margin-top:16px">
@@ -31,6 +42,27 @@
             <el-tag size="small" :type="row.is_admin ? 'danger' : 'info'">
               {{ row.is_admin ? '管理员' : '学员' }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="所属机构" width="120">
+          <template #default="{ row }">
+            <span v-if="row.organization_name">{{ row.organization_name }}</span>
+            <el-tag v-else size="small" type="info">未分配</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="权益状态" width="140">
+          <template #default="{ row }">
+            <el-tag v-if="row.entitlement_reason === 'trial'" size="small" type="warning">
+              试用{{ row.days_left != null ? ' ' + row.days_left + ' 天' : '' }}
+            </el-tag>
+            <el-tooltip
+              v-else-if="row.entitlement_active"
+              :content="row.org_expires_at ? '订阅到期：' + formatDate(row.org_expires_at) : '可用'"
+              placement="top"
+            >
+              <el-tag size="small" type="success">可用</el-tag>
+            </el-tooltip>
+            <el-tag v-else size="small" type="danger">未开通</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="200">
@@ -81,6 +113,17 @@
         <el-form-item label="管理员">
           <el-switch v-model="form.is_admin" />
         </el-form-item>
+        <el-form-item v-if="authStore.isAdmin" label="所属机构">
+          <el-select v-model="form.organization_id" placeholder="未分配（待分配池）" clearable style="width:100%">
+            <el-option v-for="o in orgs" :key="o.id" :label="o.name" :value="o.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="authStore.isAdmin" label="机构角色">
+          <el-select v-model="form.org_role" style="width:100%">
+            <el-option label="普通学员" value="member" />
+            <el-option label="机构管理员" value="admin" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -94,6 +137,8 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getStudents, createStudent, updateStudent, deleteStudent } from '@/api/students'
+import { getOrganizations } from '@/api/organizations'
+import { useAuthStore } from '@/stores/auth'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -103,6 +148,9 @@ const currentPage = ref(1)
 const pageSize = ref(15)
 const searchText = ref('')
 const filterDept = ref('')
+const filterOrg = ref('')
+const orgs = ref([])
+const authStore = useAuthStore()
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const formRef = ref(null)
@@ -119,6 +167,8 @@ const form = reactive({
   role: '',
   is_admin: false,
   is_active: true,
+  organization_id: null,
+  org_role: 'member',
 })
 
 const formRules = {
@@ -135,6 +185,7 @@ const loadData = async () => {
       limit: pageSize.value,
       search: searchText.value,
       dept: filterDept.value,
+      organization_id: filterOrg.value === '' ? 0 : filterOrg.value,
     })
     tableData.value = res.items
     total.value = res.total
@@ -145,13 +196,18 @@ const loadData = async () => {
 
 const openAdd = () => {
   editingId.value = null
-  Object.assign(form, { employee_id: '', name: '', password: '', dept: '', role: '', is_admin: false, is_active: true })
+  Object.assign(form, { employee_id: '', name: '', password: '', dept: '', role: '', is_admin: false, is_active: true, organization_id: null, org_role: 'member' })
   dialogVisible.value = true
 }
 
 const openEdit = (row) => {
   editingId.value = row.id
-  Object.assign(form, { employee_id: row.employee_id, name: row.name, password: '', dept: row.dept, role: row.role, is_admin: row.is_admin, is_active: row.is_active })
+  Object.assign(form, {
+    employee_id: row.employee_id, name: row.name, password: '', dept: row.dept,
+    role: row.role, is_admin: row.is_admin, is_active: row.is_active,
+    organization_id: row.organization_id || null,
+    org_role: row.org_role || 'member',
+  })
   dialogVisible.value = true
 }
 
@@ -162,10 +218,20 @@ const handleSave = async () => {
     if (editingId.value) {
       const payload = { name: form.name, dept: form.dept, role: form.role, is_admin: form.is_admin, is_active: form.is_active }
       if (form.password) payload.password = form.password
+      // 所属机构 / 机构角色只有超管能改
+      if (authStore.isAdmin) {
+        payload.organization_id = form.organization_id ?? 0
+        payload.org_role = form.organization_id ? (form.org_role || 'member') : ''
+      }
       await updateStudent(editingId.value, payload)
       ElMessage.success('修改成功')
     } else {
-      await createStudent({ ...form })
+      const payload = { ...form }
+      if (!authStore.isAdmin) {
+        delete payload.organization_id
+        delete payload.org_role
+      }
+      await createStudent(payload)
       ElMessage.success('添加成功')
     }
     dialogVisible.value = false
@@ -193,7 +259,28 @@ const handleToggleActive = async (row) => {
   }
 }
 
-onMounted(loadData)
+// 后端返回的是 UTC ISO 字符串，转成本地时间展示
+const formatDate = (iso) => {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('zh-CN')
+}
+
+const loadOrgs = async () => {
+  if (!authStore.isAdmin) return
+  try {
+    const res = await getOrganizations()
+    orgs.value = Array.isArray(res) ? res : (res.items || [])
+  } catch (e) {
+    orgs.value = []
+  }
+}
+
+onMounted(() => {
+  loadData()
+  loadOrgs()
+})
 </script>
 
 <style scoped>

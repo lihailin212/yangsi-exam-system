@@ -47,7 +47,8 @@ class UserSnapshot:
 
     __slots__ = ("id", "employee_id", "name", "password_hash", "dept",
                  "role", "is_admin", "is_active", "must_change_password",
-                 "created_at")
+                 "created_at", "phone", "organization_id", "org_role",
+                 "trial_expires_at", "registered_via")
 
     def __init__(self, user):
         self.id = user.id
@@ -60,6 +61,11 @@ class UserSnapshot:
         self.is_active = bool(user.is_active)
         self.must_change_password = bool(getattr(user, "must_change_password", False))
         self.created_at = user.created_at
+        self.phone = getattr(user, "phone", None)
+        self.organization_id = getattr(user, "organization_id", None)
+        self.org_role = getattr(user, "org_role", "") or ""
+        self.trial_expires_at = getattr(user, "trial_expires_at", None)
+        self.registered_via = getattr(user, "registered_via", "admin") or "admin"
 
 
 def get_cached_user(user_id: int):
@@ -172,6 +178,46 @@ def get_current_db_user(token: str = Depends(oauth2_scheme), db: Session = Depen
 def require_admin(current_user: models.User = Depends(get_current_user)):
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    return current_user
+
+
+def require_entitlement(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """校验当前用户有没有付费权益（学习/考试类接口用）。
+
+    超管和全局开关关闭时一律放行；否则试用期内、或所属机构订阅有效期内才放行。
+    不通过时用 HTTP 402 表示"欠费"，前端据此跳转订阅页（401 会被当成登录过期）。
+    """
+    from . import billing
+
+    settings = billing.get_billing_settings(db)
+    org_snapshot = billing.get_org_snapshot(db, current_user.organization_id)
+    ent = billing.compute_entitlement(current_user, org_snapshot, settings)
+    if ent.get("active"):
+        return current_user
+    # 注意：HTTPException 的 detail 会被 JSONResponse 直接序列化，
+    # 里面放 datetime 会报 "Object of type datetime is not JSON serializable"，
+    # 所以这里统一转成 ISO 字符串。
+    expires_at = ent.get("org_expires_at")
+    raise HTTPException(
+        status_code=402,
+        detail={
+            "code": "SUBSCRIPTION_EXPIRED",
+            "message": "订阅已过期或未开通，请联系机构管理员开通后再使用",
+            "reason": ent.get("reason", "no_subscription"),
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        },
+    )
+
+
+def require_org_admin(current_user=Depends(get_current_user)):
+    """机构管理员权限：本机构数据的读写都靠这个依赖把关。
+
+    超管不受机构隔离限制；机构管理员必须挂了机构且角色是 admin。
+    """
+    if current_user.is_admin:
+        return current_user
+    if current_user.org_role != "admin" or not current_user.organization_id:
+        raise HTTPException(status_code=403, detail="需要机构管理员权限")
     return current_user
 
 

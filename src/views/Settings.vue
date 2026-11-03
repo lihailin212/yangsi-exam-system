@@ -68,6 +68,38 @@
             </el-form-item>
           </el-form>
         </el-card>
+
+        <el-card style="margin-top: 20px">
+          <template #header>收费设置</template>
+          <el-form :model="billingForm" label-width="140px">
+            <el-form-item label="启用收费">
+              <el-switch v-model="billingForm.enabled" />
+              <span class="form-tip">关闭时不做任何订阅校验，所有用户照常使用</span>
+            </el-form-item>
+            <el-form-item label="试用天数">
+              <el-input-number v-model="billingForm.free_trial_days" :min="0" :max="365" />
+              <span class="form-tip">新用户注册后赠送的免费试用天数</span>
+            </el-form-item>
+            <el-form-item label="支付通道">
+              <el-select v-model="billingForm.payment_channel" style="width:220px">
+                <el-option label="人工开通（后台 / 兑换码）" value="manual" />
+                <el-option label="微信支付" value="wechat" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="短信登录">
+              <el-switch v-model="billingForm.sms_enabled" />
+              <span class="form-tip">还需在部署环境配置短信服务商密钥才能真正启用</span>
+            </el-form-item>
+            <el-form-item label="客服微信">
+              <el-input v-model="billingForm.contact_wechat" placeholder="展示在用户订阅页" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="handleSaveBilling" :loading="savingBilling">
+                保存收费设置
+              </el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
       </el-col>
     </el-row>
 
@@ -154,6 +186,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Upload, List, UploadFilled } from '@element-plus/icons-vue'
 import { getSettings, updateSettings } from '@/api/settings'
+import { getBillingSettings, saveBillingSettings } from '@/api/billing'
 import request from '@/api/index'
 
 const saving = ref(false)
@@ -167,6 +200,42 @@ const form = ref({
   notify_score_release: true,
   notify_course_update: false,
 })
+
+// 收费设置
+const savingBilling = ref(false)
+const billingForm = ref({
+  enabled: false,
+  free_trial_days: 7,
+  payment_channel: 'manual',
+  sms_enabled: false,
+  contact_wechat: '',
+})
+
+const loadBilling = async () => {
+  try {
+    const data = await getBillingSettings()
+    if (data) {
+      billingForm.value = { ...billingForm.value, ...data }
+    }
+  } catch (e) {
+    console.error('加载收费设置失败:', e)
+  }
+}
+
+const handleSaveBilling = async () => {
+  savingBilling.value = true
+  try {
+    const data = await saveBillingSettings(billingForm.value)
+    if (data) billingForm.value = { ...billingForm.value, ...data }
+    // 前端路由守卫和顶部横幅都读这个开关，保存后立刻同步
+    localStorage.setItem('billingEnabled', billingForm.value.enabled ? 'true' : 'false')
+    ElMessage.success('收费设置已保存')
+  } catch (e) {
+    ElMessage.error('保存失败')
+  } finally {
+    savingBilling.value = false
+  }
+}
 
 // 备份相关
 const backingUp = ref(false)
@@ -332,11 +401,15 @@ const formatSize = (bytes) => {
   return (bytes / 1024 / 1024).toFixed(1) + ' MB'
 }
 
-onMounted(loadSettings)
+onMounted(() => {
+  loadSettings()
+  loadBilling()
+})
 </script>
 
 <style scoped>
 .settings-page { padding: 20px; }
+.form-tip { margin-left: 12px; font-size: 12px; color: var(--neutral-400); }
 .page-header { margin-bottom: 20px; }
 .page-header h2 { font-size: 18px; font-weight: 500; }
 .logo-upload { display: flex; align-items: center; gap: 16px; }

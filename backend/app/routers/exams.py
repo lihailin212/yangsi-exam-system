@@ -8,7 +8,7 @@ from urllib.parse import quote
 from ..database import get_db
 from .. import crud, schemas
 from .. import paper as paper_lib
-from ..auth import get_current_user, require_admin
+from ..auth import get_current_user, require_admin, require_entitlement
 from ..timeutil import SUBMIT_GRACE_SECONDS, app_now, to_epoch_ms, utc_now
 
 router = APIRouter(prefix="/api/exams", tags=["exams"])
@@ -41,7 +41,7 @@ def list_exams(skip: int = 0, limit: int = 20, db: Session = Depends(get_db), _=
     return {"items": result, "total": total}
 
 @router.get("/{exam_id}")
-def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(require_entitlement)):
     exam = crud.get_exam(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
@@ -108,7 +108,7 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(g
 
 
 @router.post("/{exam_id}/start")
-def start_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def start_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(require_entitlement)):
     """考生进入考试：开启（或复用）本次作答会话，并下发权威截止时间。
 
     截止时间以服务端记录为准，前端只是据此显示倒计时。
@@ -170,7 +170,7 @@ def preview_paper(exam_id: int, db: Session = Depends(get_db), _=Depends(require
 
 @router.post("/{exam_id}/draft")
 def save_exam_draft(exam_id: int, payload: dict, db: Session = Depends(get_db),
-                     current_user=Depends(get_current_user)):
+                     current_user=Depends(require_entitlement)):
     """保存作答草稿到服务端。
 
     手机端切后台、断网、浏览器被回收都可能丢答案，草稿落到服务端后，
@@ -271,7 +271,7 @@ def delete_exam(exam_id: int, db: Session = Depends(get_db), _=Depends(require_a
 
 @router.post("/{exam_id}/submit", response_model=schemas.ExamRecordOut)
 def submit_exam(exam_id: int, record_in: schemas.ExamRecordCreate,
-                db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+                db: Session = Depends(get_db), current_user=Depends(require_entitlement)):
     record_in.exam_id = exam_id
     exam = crud.get_exam(db, exam_id)
     if not exam:

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from .. import crud, schemas, models
 from .. import paper as paper_lib
-from ..auth import get_current_user, require_admin
+from ..auth import get_current_user, require_admin, require_entitlement
 from ..storage import upload_image_bytes
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
@@ -58,7 +58,7 @@ def study_questions(
     category: str = "",
     search: str = "",
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    _=Depends(require_entitlement)
 ):
     """获取用于自学的题目（不包含答案）"""
     # 列表筛选和排序统一走 crud，题号编号（/study/ids）与列表完全一致
@@ -83,7 +83,7 @@ def study_question_ids(
     category: str = "",
     search: str = "",
     db: Session = Depends(get_db),
-    _=Depends(get_current_user)
+    _=Depends(require_entitlement)
 ):
     """返回当前筛选条件下的全部题目 id。
 
@@ -98,7 +98,7 @@ def study_question_ids(
 def study_question_detail(
     question_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_entitlement)
 ):
     """获取题目详情（包含答案和解析）"""
     q = db.query(models.Question).filter(models.Question.id == question_id).first()
@@ -137,7 +137,7 @@ class StudyBatchIn(BaseModel):
 def study_questions_batch(
     payload: StudyBatchIn,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(require_entitlement)
 ):
     """批量获取题目详情（自学用）。
 

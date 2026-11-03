@@ -33,6 +33,29 @@ _exam_question_cache = {}
 def get_user_by_employee_id(db: Session, employee_id: str):
     return db.query(models.User).filter(models.User.employee_id == employee_id).first()
 
+def get_user_by_phone(db: Session, phone: str):
+    if not phone:
+        return None
+    return db.query(models.User).filter(models.User.phone == phone).first()
+
+
+def get_user_by_identifier(db: Session, identifier: str):
+    """按「工号或手机号」找用户。
+
+    自助注册用户的 employee_id 就是手机号；管理员建的账号可能只填了工号。
+    工号优先，找不到再按手机号查，避免两者相同时串号。
+    """
+    if not identifier:
+        return None
+    identifier = identifier.strip()
+    user = db.query(models.User).filter(models.User.employee_id == identifier).first()
+    if user is not None:
+        return user
+    if identifier.isdigit():
+        return db.query(models.User).filter(models.User.phone == identifier).first()
+    return None
+
+
 def get_users(db: Session, skip=0, limit=100, search="", dept=""):
     q = db.query(models.User)
     if search:
@@ -52,6 +75,9 @@ def create_user(db: Session, user_in: schemas.UserCreate):
         role=user_in.role,
         is_admin=user_in.is_admin,
         is_active=user_in.is_active,
+        organization_id=(user_in.organization_id or None),
+        org_role=user_in.org_role or ("member" if user_in.organization_id else ""),
+        registered_via="admin",
     )
     db.add(user)
     db.commit()
@@ -74,6 +100,14 @@ def update_user(db: Session, user_id: int, user_in: schemas.UserUpdate):
         user.is_admin = user_in.is_admin
     if user_in.is_active is not None:
         user.is_active = user_in.is_active
+    if user_in.organization_id is not None:
+        # organization_id=0 表示移出机构（回到待分配池）
+        user.organization_id = user_in.organization_id or None
+        # 换机构后角色要跟着重算：管理员身份不会跨机构继承
+        if user_in.org_role is None:
+            user.org_role = "member" if user_in.organization_id else ""
+    if user_in.org_role is not None:
+        user.org_role = user_in.org_role
     db.commit()
     db.refresh(user)
     # 管理员改了权限或启停账号，缓存里的旧快照必须立刻作废

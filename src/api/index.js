@@ -16,7 +16,8 @@ request.interceptors.request.use(config => {
 
 // 清空本地登录态（token 失效时用）
 const clearAuthStorage = () => {
-  ['token', 'userId', 'userName', 'isAdmin', 'employeeId', 'mustChangePassword']
+  ['token', 'userId', 'userName', 'isAdmin', 'employeeId', 'mustChangePassword',
+   'organizationId', 'organizationName', 'orgRole', 'trialExpiresAt', 'entitlementActive']
     .forEach(k => localStorage.removeItem(k))
   // 同步清掉 Pinia 里的登录态（动态引入，避免与 stores/auth 形成循环依赖）
   import('@/stores/auth')
@@ -37,7 +38,17 @@ request.interceptors.response.use(
     const skipAuthRedirect = err.config?.skipAuthRedirect
     const silent = err.config?.silent
 
-    if (status === 401 && !skipAuthRedirect) {
+    if (status === 402) {
+      // 订阅过期/未开通：不清登录态（成绩记录还要能查），只把用户领到订阅页
+      if (!silent) {
+        const d = err.response?.data?.detail
+        ElMessage.warning(typeof d === 'string' ? d : (d?.message || '订阅已过期或未开通'))
+      }
+      if (!window.location.hash.startsWith('#/subscribe')) {
+        window.location.hash = '#/subscribe'
+      }
+      return Promise.reject(err)
+    } else if (status === 401 && !skipAuthRedirect) {
       // 已登录后的接口返回 401：token 失效/过期
       if (!handlingUnauthorized) {
         handlingUnauthorized = true

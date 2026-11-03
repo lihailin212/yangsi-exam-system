@@ -157,6 +157,15 @@
 
       <!-- Main Content Area -->
       <el-main class="main-content">
+        <!-- 订阅状态横幅：试用剩余 / 机构即将到期 / 已过期 -->
+        <div v-if="billingBanner.visible" class="billing-banner" :class="billingBanner.type">
+          <el-icon><component :is="billingBanner.icon" /></el-icon>
+          <span class="banner-text">{{ billingBanner.text }}</span>
+          <el-button type="primary" link size="small" @click="router.push('/subscribe')">
+            {{ billingBanner.action }}
+          </el-button>
+        </div>
+
         <router-view v-slot="{ Component }">
           <transition name="page" mode="out-in">
             <component :is="Component" />
@@ -174,6 +183,7 @@ import { APP_VERSION } from '@/version'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { getRecentRecords } from '@/api/exams'
+import { getMySubscription } from '@/api/billing'
 import {
   HomeFilled,
   Reading,
@@ -240,21 +250,82 @@ const updateTime = () => {
   currentTime.value = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+// roles 决定谁能看到这个菜单：
+//   'admin'    只有系统超管
+//   'orgAdmin' 机构管理员（含超管）
+//   不写 roles  = 所有人都能看到
 const allMenuItems = [
-  { path: '/dashboard', title: '管理首页', icon: 'HomeFilled', admin: true },
-  { path: '/questions', title: '题库管理', icon: 'Reading', admin: true },
-  { path: '/exams', title: '考试管理', icon: 'Edit', admin: true },
-  { path: '/arena', title: '专业擂台赛', icon: 'Trophy', admin: true },
-  { path: '/my-exams', title: '我的考试', icon: 'Tickets', admin: false },
-  { path: '/self-study', title: '考生自学', icon: 'Memo', admin: false },
-  { path: '/statistics', title: '数据统计', icon: 'DataAnalysis', admin: true },
-  { path: '/students', title: '学员管理', icon: 'User', admin: true },
-  { path: '/settings', title: '系统设置', icon: 'Setting', admin: true },
+  { path: '/dashboard', title: '管理首页', icon: 'HomeFilled', roles: ['admin'] },
+  { path: '/questions', title: '题库管理', icon: 'Reading', roles: ['admin'] },
+  { path: '/exams', title: '考试管理', icon: 'Edit', roles: ['admin'] },
+  { path: '/arena', title: '专业擂台赛', icon: 'Trophy', roles: ['admin'] },
+  { path: '/my-exams', title: '我的考试', icon: 'Tickets' },
+  { path: '/self-study', title: '考生自学', icon: 'Memo' },
+  { path: '/statistics', title: '数据统计', icon: 'DataAnalysis', roles: ['admin'] },
+  { path: '/students', title: '学员管理', icon: 'User', roles: ['admin', 'orgAdmin'] },
+  { path: '/settings', title: '系统设置', icon: 'Setting', roles: ['admin'] },
+  // ---- 收费 / 机构 ----
+  { path: '/subscribe', title: '我的订阅', icon: 'Wallet' },
+  { path: '/org-members', title: '机构学员', icon: 'UserFilled', roles: ['admin', 'orgAdmin'] },
+  { path: '/organizations', title: '机构管理', icon: 'OfficeBuilding', roles: ['admin'] },
+  { path: '/subscription-plans', title: '套餐管理', icon: 'Goods', roles: ['admin'] },
+  { path: '/subscription-orders', title: '开通记录', icon: 'List', roles: ['admin'] },
 ]
 
 const menuItems = computed(() => {
-  return allMenuItems.filter(item => authStore.isAdmin || !item.admin)
+  return allMenuItems.filter(item => {
+    if (!item.roles || !item.roles.length) return true
+    if (item.roles.includes('admin') && authStore.isAdmin) return true
+    if (item.roles.includes('orgAdmin') && authStore.isOrgAdmin) return true
+    return false
+  })
 })
+
+// ---- 订阅横幅 ----
+const billingBanner = ref({ visible: false, type: '', icon: '', text: '', action: '' })
+
+const loadEntitlement = async () => {
+  if (!authStore.token) return
+  // 全局收费开关关着时不显示任何提示
+  if (localStorage.getItem('billingEnabled') !== 'true') {
+    billingBanner.value = { visible: false, type: '', icon: '', text: '', action: '' }
+    return
+  }
+  try {
+    const ent = await getMySubscription()
+    authStore.setEntitlement(ent.active, ent.days_left)
+    const org = ent.organization || {}
+    if (!ent.active) {
+      billingBanner.value = {
+        visible: true,
+        type: 'danger',
+        icon: 'WarningFilled',
+        text: '订阅已过期或未开通，学习与考试已暂停（成绩记录仍可查看）',
+        action: '去开通',
+      }
+    } else if (ent.reason === 'trial') {
+      billingBanner.value = {
+        visible: true,
+        type: 'info',
+        icon: 'InfoFilled',
+        text: `试用中，剩余 ${ent.days_left} 天`,
+        action: '查看订阅',
+      }
+    } else if (ent.reason === 'organization' && org.name && ent.days_left <= 7) {
+      billingBanner.value = {
+        visible: true,
+        type: 'warning',
+        icon: 'AlarmClock',
+        text: `${org.name} 订阅将在 ${ent.days_left} 天后到期`,
+        action: '去续费',
+      }
+    } else {
+      billingBanner.value = { visible: false, type: '', icon: '', text: '', action: '' }
+    }
+  } catch (e) {
+    // 网络问题不打扰用户，保持上一轮的横幅
+  }
+}
 
 // 计算相对时间
 const formatRelativeTime = (dateStr) => {
@@ -376,6 +447,7 @@ onMounted(() => {
     loadNotifications()
     notifInterval = setInterval(loadNotifications, 5000)
     notifTickInterval = setInterval(() => { notifTick.value++ }, 60000)
+    loadEntitlement()
   }
   timeInterval = setInterval(updateTime, 1000)
   window.addEventListener('resize', checkMobile)
@@ -392,7 +464,10 @@ onUnmounted(() => {
 
 // 每次路由切换时刷新通知
 watch(() => route.path, () => {
-  if (authStore.token) loadNotifications()
+  if (authStore.token) {
+    loadNotifications()
+    loadEntitlement()
+  }
 })
 
 const handleMenuSelect = (index) => {
@@ -811,6 +886,40 @@ const handleCommand = (command) => {
 /* Main Content */
 .main-container {
   flex-direction: column;
+}
+
+/* 订阅状态横幅 */
+.billing-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.billing-banner .banner-text {
+  flex: 1;
+}
+
+.billing-banner.info {
+  background: #ECF5FF;
+  border: 1px solid #B3D8FF;
+  color: #409EFF;
+}
+
+.billing-banner.warning {
+  background: #FDF6EC;
+  border: 1px solid #F5DAB1;
+  color: #E6A23C;
+}
+
+.billing-banner.danger {
+  background: #FEF0F0;
+  border: 1px solid #FBC4C4;
+  color: #F56C6C;
 }
 
 .main-content {

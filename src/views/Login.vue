@@ -57,11 +57,11 @@
             <el-tab-pane label="账号登录" name="account">
               <el-form :model="form" :rules="rules" ref="formRef" class="login-form" @submit.prevent="handleLogin">
                 <div class="form-group">
-                  <label class="form-label">工号</label>
+                  <label class="form-label">工号 / 手机号</label>
                   <el-form-item prop="employee_id">
                     <el-input 
                       v-model="form.employee_id" 
-                      placeholder="请输入工号" 
+                      placeholder="请输入工号或手机号" 
                       size="large"
                       :prefix-icon="User"
                       class="custom-input"
@@ -120,12 +120,72 @@
                 <p class="qrcode-url">{{ currentUrl }}</p>
               </div>
             </el-tab-pane>
+
+            <el-tab-pane label="验证码登录" name="sms" :disabled="!smsEnabled">
+              <el-form :model="smsForm" class="login-form" @submit.prevent="handleSmsLogin">
+                <div class="form-group">
+                  <label class="form-label">手机号</label>
+                  <el-form-item prop="phone">
+                    <el-input
+                      v-model="smsForm.phone"
+                      placeholder="请输入手机号"
+                      size="large"
+                      :prefix-icon="Iphone"
+                      class="custom-input"
+                    />
+                  </el-form-item>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">验证码</label>
+                  <el-form-item prop="code">
+                    <el-input
+                      v-model="smsForm.code"
+                      placeholder="请输入验证码"
+                      size="large"
+                      class="custom-input"
+                      @keyup.enter="handleSmsLogin"
+                    >
+                      <template #append>
+                        <el-button
+                          :disabled="smsCountdown > 0 || smsSending"
+                          @click="handleSendSmsCode"
+                        >{{ smsCountdown > 0 ? smsCountdown + 's' : '获取验证码' }}</el-button>
+                      </template>
+                    </el-input>
+                  </el-form-item>
+                </div>
+
+                <el-form-item>
+                  <el-button
+                    type="primary"
+                    size="large"
+                    class="login-btn"
+                    @click="handleSmsLogin"
+                    :loading="loading"
+                    :disabled="loading"
+                  >
+                    <span v-if="!loading">登 录</span>
+                    <span v-else class="loading-text">登录中...</span>
+                  </el-button>
+                </el-form-item>
+
+                <p v-if="smsError" class="login-error">{{ smsError }}</p>
+              </el-form>
+            </el-tab-pane>
           </el-tabs>
+
+          <p v-if="!smsEnabled" class="login-hint">
+            短信验证码登录即将开放，请先用工号或手机号登录
+          </p>
         </div>
 
         <!-- Footer -->
         <div class="login-footer">
           <p>© 2024 {{ settingsStore.systemName || '杨思学考试系统' }}</p>
+          <p class="register-tip">
+            没有账号？<a @click="goRegister">立即注册</a>
+          </p>
         </div>
       </div>
     </div>
@@ -133,12 +193,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
-import { User, Lock, Check, TrendCharts, DataLine, Medal } from '@element-plus/icons-vue'
+import { sendSmsCode, smsLogin } from '@/api/auth'
+import { User, Lock, Check, TrendCharts, DataLine, Medal, Iphone } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -152,9 +213,17 @@ const currentUrl = ref(window.location.origin + window.location.pathname)
 
 const form = ref({ employee_id: '', password: '' })
 const rules = {
-  employee_id: [{ required: true, message: '请输入工号', trigger: 'blur' }],
+  employee_id: [{ required: true, message: '请输入工号或手机号', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
+
+// ---- 短信验证码登录（服务端未开通短信时禁用这个 Tab）----
+const smsEnabled = ref(localStorage.getItem('smsLoginEnabled') === 'true')
+const smsSending = ref(false)
+const smsCountdown = ref(0)
+const smsError = ref('')
+const smsForm = ref({ phone: '', code: '' })
+let smsTimer = null
 
 const features = [
   { icon: Check, text: '智能题库管理' },
@@ -169,14 +238,7 @@ const handleLogin = () => {
     loginError.value = ''
     try {
       const res = await authStore.doLogin(form.value.employee_id, form.value.password)
-      if (res.must_change_password) {
-        // 初始密码首次登录：先去改密码，改完才能用系统
-        ElMessage.warning('首次登录，请先修改初始密码')
-        router.push('/change-password')
-      } else {
-        ElMessage.success({ message: '登录成功，欢迎回来！', duration: 2000 })
-        router.push('/dashboard')
-      }
+      afterLogin(res)
     } catch (e) {
       // 登录接口的错误不走全局拦截器（避免被当成 token 失效跳走），这里直接展示
       loginError.value = e?.response?.data?.detail
@@ -185,6 +247,72 @@ const handleLogin = () => {
       loading.value = false
     }
   })
+}
+
+// 登录成功后统一处理：初始密码强制改密 / 按角色进首页
+const afterLogin = (res) => {
+  if (res.must_change_password) {
+    // 初始密码首次登录：先去改密码，改完才能用系统
+    ElMessage.warning('首次登录，请先修改初始密码')
+    router.push('/change-password')
+  } else {
+    ElMessage.success({ message: '登录成功，欢迎回来！', duration: 2000 })
+    router.push(res.is_admin ? '/dashboard' : '/my-exams')
+  }
+}
+
+const goRegister = () => {
+  router.push('/register')
+}
+
+const handleSendSmsCode = async () => {
+  const phone = (smsForm.value.phone || '').trim()
+  if (!/^1[3-9]\d{9}$/.test(phone)) {
+    ElMessage.warning('请输入正确的 11 位手机号')
+    return
+  }
+  smsSending.value = true
+  try {
+    await sendSmsCode(phone)
+    ElMessage.success('验证码已发送')
+    smsCountdown.value = 60
+    if (smsTimer) clearInterval(smsTimer)
+    smsTimer = setInterval(() => {
+      smsCountdown.value -= 1
+      if (smsCountdown.value <= 0 && smsTimer) {
+        clearInterval(smsTimer)
+        smsTimer = null
+      }
+    }, 1000)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '验证码发送失败')
+  } finally {
+    smsSending.value = false
+  }
+}
+
+const handleSmsLogin = async () => {
+  const phone = (smsForm.value.phone || '').trim()
+  const code = (smsForm.value.code || '').trim()
+  if (!/^1[3-9]\d{9}$/.test(phone)) {
+    ElMessage.warning('请输入正确的 11 位手机号')
+    return
+  }
+  if (!code) {
+    ElMessage.warning('请输入验证码')
+    return
+  }
+  loading.value = true
+  smsError.value = ''
+  try {
+    const res = await smsLogin({ phone, code })
+    authStore.applySession(res)
+    afterLogin(res)
+  } catch (e) {
+    smsError.value = e?.response?.data?.detail || '登录失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
 }
 
 const handleTabChange = (activeName) => {
@@ -215,6 +343,15 @@ const generateQrcode = async () => {
 }
 
 watch(activeTab, handleTabChange)
+
+onMounted(() => {
+  // main.js 启动时会拉一次全局能力开关，这里同步一次最新值
+  smsEnabled.value = localStorage.getItem('smsLoginEnabled') === 'true'
+})
+
+onUnmounted(() => {
+  if (smsTimer) clearInterval(smsTimer)
+})
 </script>
 
 <style scoped>
@@ -569,6 +706,31 @@ watch(activeTab, handleTabChange)
 .loading-text {
   position: relative;
   z-index: 1;
+}
+
+/* SMS 提示 */
+.login-hint {
+  margin-top: var(--space-3);
+  text-align: center;
+  font-size: 13px;
+  color: var(--neutral-400);
+}
+
+/* 注册引导 */
+.register-tip {
+  margin-top: var(--space-2);
+  font-size: 13px;
+  color: var(--neutral-400);
+}
+
+.register-tip a {
+  color: var(--primary-400);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.register-tip a:hover {
+  color: var(--primary-500);
 }
 
 /* Error Tip */

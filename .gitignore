@@ -45,6 +45,7 @@ settings.json
 
 .vercel
 .env*
+!.env.example
 
 # ---- 版本控制清理（V1.0）----
 # 运行时上传的图片：题库里的图片已经放到 Vercel Blob，
@@ -92,6 +93,11 @@ backend/test_result.txt
 backend/q96_options.txt
 backend/exam.db.backup
 backend/backups/
+
+# E2E 测试产物（本地临时 SQLite 库 / 截图 / 报告）
+.e2e-data/
+test-results/
+playwright-report/
 
 # 登录态 / 本机状态
 iqc_login_state.json

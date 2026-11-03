@@ -92,6 +92,28 @@ def update_settings(settings: Settings, _=Depends(require_admin)):
     save_settings(settings.model_dump())
     return {"ok": True, "message": "设置已保存"}
 
+@router.get("/billing")
+def get_billing_settings(_=Depends(require_admin)):
+    """收费相关设置：总开关、试用天数、支付通道、短信开关、客服微信。"""
+    from .. import billing as billing_lib
+    db = SessionLocal()
+    try:
+        return billing_lib.get_billing_settings(db, force=True)
+    finally:
+        db.close()
+
+
+@router.post("/billing")
+def update_billing_settings(payload: dict, _=Depends(require_admin)):
+    """保存收费设置。enabled 是总开关：关掉时不做任何订阅校验。"""
+    from .. import billing as billing_lib
+    db = SessionLocal()
+    try:
+        return billing_lib.save_billing_settings(db, payload or {})
+    finally:
+        db.close()
+
+
 # ==================== 数据备份与恢复 ====================
 
 # 需要备份的表（按依赖顺序）

@@ -8,10 +8,23 @@ from .database import engine, Base, SessionLocal
 from . import models
 from .config import APP_VERSION, ADMIN_INITIAL_PASSWORD
 from .auth import verify_password
-from .routers import auth, exams, questions, students, statistics, upload, settings, distributions, arenas, arenas_ws
+from .routers import (auth, exams, questions, students, statistics, upload,
+                      settings, distributions, arenas, arenas_ws, billing, organizations)
 
 # 创建所有表
 Base.metadata.create_all(bind=engine)
+
+# 默认机构套餐：导入时就写好（startup 事件里还会再兜一次），
+# 这样任何入口（脚本、测试、首次部署）都能直接看到套餐。
+try:
+    from . import billing as _billing
+    _db = SessionLocal()
+    try:
+        _billing.ensure_default_plans(_db)
+    finally:
+        _db.close()
+except Exception as _e:  # 数据库暂时连不上不影响启动
+    print(f"[billing] 初始化默认套餐跳过: {_e}", file=sys.stderr)
 
 # 迁移：为 exams 表添加 total_score 和 retake_limit 列
 from sqlalchemy import text
@@ -115,6 +128,28 @@ _add_column("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
 # 初始密码没改过的账号：登录后强制改密码，改完之前其他接口一律拒绝
 _add_column("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE")
 _add_column("ALTER TABLE arenas ADD COLUMN current_question_id INTEGER")
+
+# ---- 收费改造：手机号注册 + 机构（付费单位） ----
+_add_column("ALTER TABLE users ADD COLUMN phone VARCHAR(20)")
+_add_column("ALTER TABLE users ADD COLUMN organization_id INTEGER REFERENCES organizations(id)")
+_add_column("ALTER TABLE users ADD COLUMN org_role VARCHAR(20) DEFAULT ''")
+_add_column("ALTER TABLE users ADD COLUMN trial_expires_at TIMESTAMP")
+_add_column("ALTER TABLE users ADD COLUMN registered_via VARCHAR(20) DEFAULT 'admin'")
+
+
+def _add_index(ddl: str) -> None:
+    """幂等地建索引。Postgres 与 SQLite 都支持 CREATE INDEX IF NOT EXISTS。"""
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(ddl))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+
+# 手机号唯一（Postgres 里 NULL 不参与唯一约束，存量工号账号不受影响）
+_add_index("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_phone ON users (phone)")
+_add_index("CREATE INDEX IF NOT EXISTS ix_users_organization ON users (organization_id)")
 _sync_sequences()
 
 # 布尔列历史上允许为 NULL，序列化时会直接报错，这里回填并收紧约束
@@ -162,6 +197,9 @@ app.include_router(distributions.exam_login_router)
 app.include_router(distributions.exam_student_router)
 app.include_router(arenas.router)
 app.include_router(arenas_ws.router)
+app.include_router(billing.router)
+app.include_router(billing.admin_router)
+app.include_router(organizations.router)
 
 @app.get("/uploads/{filename:path}")
 def serve_upload(filename: str):
@@ -212,6 +250,19 @@ def _generate_initial_password(length: int = 16) -> str:
     """
     alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*-_=+"
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+@app.on_event("startup")
+def init_billing_defaults():
+    """首次启动写入默认机构套餐。管理员可以随时改价、改名、改席位。"""
+    from . import billing as billing_lib
+    db = SessionLocal()
+    try:
+        billing_lib.ensure_default_plans(db)
+    except Exception as e:
+        print(f"[billing] 初始化默认套餐失败: {e}", file=sys.stderr)
+    finally:
+        db.close()
 
 
 @app.on_event("startup")

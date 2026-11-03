@@ -25,6 +25,11 @@ class TokenResponse(BaseModel):
     is_admin: bool
     employee_id: str
     must_change_password: bool = False  # 初始密码没改，前端要跳改密码页
+    organization_id: Optional[int] = None
+    organization_name: str = ""
+    org_role: str = ""
+    trial_expires_at: Optional[datetime] = None
+    entitlement_active: bool = True
 
 
 class ChangePasswordRequest(BaseModel):
@@ -40,6 +45,9 @@ class UserCreate(BaseModel):
     role: str = ""
     is_admin: bool = False
     is_active: bool = True
+    # 可选：直接放进某个机构（超管建号时用）
+    organization_id: Optional[int] = None
+    org_role: str = ""
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -48,6 +56,9 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     is_admin: Optional[bool] = None
     is_active: Optional[bool] = None
+    # 只有超管能改：把学员拉进某个机构 / 设为机构管理员
+    organization_id: Optional[int] = None
+    org_role: Optional[str] = None
 
 class UserOut(BaseModel):
     id: int
@@ -58,6 +69,182 @@ class UserOut(BaseModel):
     is_admin: bool
     is_active: bool
     created_at: datetime
+    phone: Optional[str] = None
+    organization_id: Optional[int] = None
+    org_role: str = ""
+    trial_expires_at: Optional[datetime] = None
+    registered_via: str = "admin"
+    class Config:
+        from_attributes = True
+
+
+# ---- 注册 / 短信登录 ----
+class RegisterRequest(BaseModel):
+    phone: str
+    name: str = ""
+    password: str
+    invite_code: str = ""
+
+
+class SmsSendRequest(BaseModel):
+    phone: str
+
+
+class SmsLoginRequest(BaseModel):
+    phone: str
+    code: str
+
+
+# ---- 机构 ----
+class OrganizationCreate(BaseModel):
+    name: str
+    contact_name: str = ""
+    contact_phone: str = ""
+    seat_limit: int = 0
+    plan_id: Optional[int] = None
+    duration_days: Optional[int] = None
+    amount_cents: int = 0
+    note: str = ""
+
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    seat_limit: Optional[int] = None
+    is_active: Optional[bool] = None
+    # 超管手工调整订阅到期日（退款、改期等场景）。只认日期，精确到天。
+    subscription_expires_at: Optional[str] = None
+
+
+class OrganizationOut(BaseModel):
+    id: int
+    name: str
+    invite_code: str
+    contact_name: str
+    contact_phone: str
+    seat_limit: int
+    subscription_expires_at: Optional[datetime] = None
+    subscription_plan_code: str
+    is_active: bool
+    created_at: datetime
+    seat_used: int = 0
+    class Config:
+        from_attributes = True
+
+
+class OrgMemberCreate(BaseModel):
+    phone: str
+    name: str = ""
+    password: str = ""
+    dept: str = ""
+
+
+class OrgMemberUpdate(BaseModel):
+    name: Optional[str] = None
+    dept: Optional[str] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+    org_role: Optional[str] = None
+
+
+class OrgMemberOut(BaseModel):
+    id: int
+    employee_id: str
+    name: str
+    dept: str
+    phone: Optional[str] = None
+    is_active: bool
+    org_role: str
+    is_admin: bool
+    trial_expires_at: Optional[datetime] = None
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class GrantRequest(BaseModel):
+    """超管给机构开通/续期。"""
+    plan_id: Optional[int] = None
+    duration_days: Optional[int] = None
+    seat_limit: Optional[int] = None
+    amount_cents: int = 0
+    note: str = ""
+
+
+# ---- 套餐 / 兑换码 / 订单 ----
+class PlanIn(BaseModel):
+    code: str
+    name: str
+    seat_limit: int = 20
+    duration_days: int = 30
+    price_cents: int = 0
+    description: str = ""
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class PlanOut(PlanIn):
+    id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class RedeemRequest(BaseModel):
+    code: str
+
+
+class CodeGenerateRequest(BaseModel):
+    plan_id: Optional[int] = None
+    duration_days: Optional[int] = None
+    seat_limit: Optional[int] = None
+    amount_cents: int = 0
+    count: int = 1
+    valid_days: int = 0        # 兑换码本身的有效期，0=不过期
+    organization_id: Optional[int] = None
+
+
+class CodeOut(BaseModel):
+    id: int
+    code: str
+    organization_id: Optional[int] = None
+    plan_name: str
+    duration_days: int
+    seat_limit: int
+    amount_cents: int
+    batch_no: str
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    used_at: Optional[datetime] = None
+    status: str
+    class Config:
+        from_attributes = True
+
+
+class AdminRedeemRequest(BaseModel):
+    code: str
+    organization_id: int
+
+
+class CreateOrderRequest(BaseModel):
+    plan_id: int
+    organization_id: Optional[int] = None
+
+
+class OrderOut(BaseModel):
+    id: int
+    order_no: str
+    organization_id: Optional[int] = None
+    plan_name: str
+    seat_limit: int
+    duration_days: int
+    amount_cents: int
+    channel: str
+    status: str
+    created_at: datetime
+    paid_at: Optional[datetime] = None
+    note: str
     class Config:
         from_attributes = True
 
