@@ -143,17 +143,7 @@
           @dblclick="resetCardPosition"
         >
           <span>学习进度：{{ currentIndex + 1 }} / {{ studyIds.length }}</span>
-          <div class="study-actions">
-            <el-button size="small" @click="prevQuestion" :disabled="currentIndex === 0">
-              上一题
-            </el-button>
-            <el-button size="small" @click="nextQuestion" :disabled="currentIndex === studyIds.length - 1">
-              下一题
-            </el-button>
-            <el-button size="small" type="danger" @click="exitStudy">
-              退出学习
-            </el-button>
-          </div>
+          <span class="study-drag-tip">按住标题栏可拖动窗口</span>
         </div>
       </template>
 
@@ -243,11 +233,17 @@
             </div>
           </div>
 
-          <!-- 下一题按钮（显示答案后） -->
-          <div v-if="answerRevealed" class="next-hint">
-            <el-button type="primary" @click="nextQuestion">
-              {{ currentIndex < studyIds.length - 1 ? '下一题' : '学习完成' }}
+          <!-- 底部操作栏：上一题 / 下一题（最后一题为提交）/ 退出学习 -->
+          <div class="study-nav">
+            <el-button :disabled="currentIndex === 0" @click="prevQuestion">
+              上一题
+            </el-button>
+            <el-button type="primary" @click="handleNavNext">
+              {{ currentIndex < studyIds.length - 1 ? '下一题' : '提交学习' }}
               <el-icon><ArrowRight /></el-icon>
+            </el-button>
+            <el-button type="danger" plain @click="exitStudy">
+              退出学习
             </el-button>
           </div>
         </div>
@@ -652,6 +648,15 @@ const prevQuestion = () => {
     currentIndex.value--
     answerRevealed.value = false
     ensureDetail(currentIndex.value)
+  }
+}
+
+// 底部主按钮：不是最后一题就下一题，最后一题直接提交（不用先看解析）
+const handleNavNext = () => {
+  if (currentIndex.value < studyIds.value.length - 1) {
+    nextQuestion()
+  } else {
+    showCompleteDialog.value = true
   }
 }
 
@@ -1401,11 +1406,19 @@ onMounted(() => {
   margin: 10px 0;
 }
 
-.next-hint {
-  text-align: center;
+.study-nav {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
   margin-top: 20px;
-  padding-top: 20px;
+  padding-top: 18px;
   border-top: 1px solid #ebeef5;
+}
+
+.study-drag-tip {
+  font-size: 12px;
+  color: #909399;
 }
 
 .progress-bar {
