@@ -191,16 +191,34 @@
             <div v-else class="fill-tip">填好后点击下方「查看答案和解析」对照答案</div>
           </div>
 
-          <!-- 备选答案 -->
+          <!-- 备选答案（可点选作答） -->
           <div v-if="hasOptions" class="options-area">
             <div
               v-for="opt in optionList"
               :key="opt.key"
               class="option-item"
-              :class="{ correct: answerRevealed && isCorrectOption(opt.key) }"
+              :class="{
+                chosen: isChosen(opt.key),
+                correct: answerRevealed && isCorrectOption(opt.key),
+                wrong: answerRevealed && isChosen(opt.key) && !isCorrectOption(opt.key)
+              }"
+              @click="toggleChoice(opt.key)"
             >
               <span class="option-key">{{ opt.key }}</span>
               <span class="option-val" v-html="opt.label"></span>
+              <el-icon v-if="isChosen(opt.key)" class="option-mark"><CircleCheckFilled /></el-icon>
+            </div>
+            <div v-if="!answerRevealed" class="choice-tip">点击选项作答，然后点下方查看答案和解析</div>
+            <div
+              v-else
+              class="choice-result"
+              :class="{
+                correct: choiceResultType === 'correct',
+                wrong: choiceResultType === 'wrong',
+                none: choiceResultType === 'none'
+              }"
+            >
+              {{ choiceResultText }}
             </div>
           </div>
 
@@ -730,6 +748,68 @@ const optionList = computed(() => {
 // 是否有可展示的选项
 const hasOptions = computed(() => optionList.value.length > 0)
 
+// 选择题的作答（按题目 id 存，切题不丢）
+const studentChoices = reactive({})
+
+// 当前题目的选择
+const choiceKeys = computed(() => {
+  const id = currentQuestion.value?.id
+  return id && studentChoices[id] ? studentChoices[id] : []
+})
+
+// 该选项是否被选中
+const isChosen = (key) => choiceKeys.value.includes(String(key))
+
+// 点选选项：单选/判断题单选，多选题可多选；再点一次取消
+const toggleChoice = (key) => {
+  const q = currentQuestion.value
+  if (!q) return
+  const id = q.id
+  const keyStr = String(key)
+  const cur = studentChoices[id] || []
+  if (q.type === 'multiple') {
+    studentChoices[id] = cur.includes(keyStr) ? cur.filter((k) => k !== keyStr) : [...cur, keyStr]
+  } else {
+    studentChoices[id] = cur.includes(keyStr) ? [] : [keyStr]
+  }
+}
+
+// 本题是否有标准答案（考试中的题，后端会对考生隐藏答案）
+const hasStandardAnswer = computed(() =>
+  !!String(currentQuestion.value?.answer || '').trim()
+)
+
+// 作答结果：答对 / 答错 / 未作答
+const choiceResultType = computed(() => {
+  if (!answerRevealed.value) return ''
+  const chosen = choiceKeys.value
+  if (!chosen.length) return 'none'
+  if (!hasStandardAnswer.value) return 'none'
+  const q = currentQuestion.value
+  if (q?.type === 'multiple') {
+    const right = answerKeys.value
+    if (!right.length) return 'none'
+    // 多选：全部选对且没有多选才算对
+    const hit = chosen.length === right.length && chosen.every((k) => right.includes(String(k)))
+    return hit ? 'correct' : 'wrong'
+  }
+  // 单选/判断题：判断题的标准答案是「正确/错误」文本，用 isCorrectOption 判断
+  return isCorrectOption(chosen[0]) ? 'correct' : 'wrong'
+})
+
+const choiceResultText = computed(() => {
+  const chosen = choiceKeys.value.map((k) => {
+    const opt = optionList.value.find((o) => o.key === k)
+    return opt ? `${k}. ${String(opt.label).replace(/<[^>]+>/g, '')}` : k
+  }).join('、')
+  if (choiceResultType.value === 'correct') return `你的选择：${chosen}　✔ 回答正确`
+  if (choiceResultType.value === 'wrong') return `你的选择：${chosen}　✘ 回答不正确`
+  if (chosen && !hasStandardAnswer.value) {
+    return `你的选择：${chosen}　（本题正在考试中，暂不显示标准答案）`
+  }
+  return chosen ? `你的选择：${chosen}` : '未作答，正确答案见下方'
+})
+
 // 填空题：考生自己填的答案（按题目 id 存，切题不丢）
 const studentAnswers = ref({})
 const fillAnswer = computed({
@@ -992,6 +1072,67 @@ onMounted(() => {
   border-radius: 8px;
   background-color: #ffffff;
   transition: all 0.3s;
+  cursor: pointer;
+  user-select: none;
+}
+
+.option-item:hover {
+  border-color: #409eff;
+  background-color: #f0f9ff;
+}
+
+.option-item.chosen {
+  border-color: #409eff;
+  background-color: #ecf5ff;
+}
+
+.option-item.correct {
+  border-color: #67c23a;
+  background-color: #f0f9eb;
+}
+
+.option-item.wrong {
+  border-color: #f56c6c;
+  background-color: #fef0f0;
+}
+
+.option-mark {
+  margin-left: auto;
+  color: #409eff;
+  font-size: 18px;
+}
+
+.option-item.correct .option-mark {
+  color: #67c23a;
+}
+
+.option-item.wrong .option-mark {
+  color: #f56c6c;
+}
+
+.choice-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+.choice-result {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.choice-result.correct {
+  color: #67c23a;
+}
+
+.choice-result.wrong {
+  color: #f56c6c;
+}
+
+.choice-result.none {
+  color: #909399;
+  font-weight: 400;
 }
 
 .option-item.correct {
