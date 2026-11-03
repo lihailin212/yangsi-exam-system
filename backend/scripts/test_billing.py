@@ -236,6 +236,12 @@ def main():
                                json={"code": c}).status_code
         check("兑换限流生效（超过 5 次/分钟返回 429）", last == 429, last)
 
+    # ---------- 9.8 图片代理 ----------
+    r = client.get("/api/images/xxx.jpg")
+    check("图片代理：没有配对象存储时返回 404 而不是 500", r.status_code == 404, r.status_code)
+    r = client.get("/api/images/../../etc/passwd")
+    check("图片代理：拒绝路径穿越", r.status_code == 404, r.status_code)
+
     # ---------- 10. 待分配池 -> 拉入机构 ----------
     # 注册时不填邀请码，进待分配池
     r = client.post("/api/auth/register", json={

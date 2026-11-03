@@ -84,12 +84,31 @@ function Test-Port([int]$Port) {
   try {
     $c = New-Object System.Net.Sockets.TcpClient
     $t = $c.ConnectAsync('127.0.0.1', $Port)
-    if (-not $t.Wait(1500)) { $c.Close(); return $false }
+    if (-not $t.Wait(4000)) { $c.Close(); return $false }
     $c.Close(); return $true
   } catch { return $false }
 }
 
+function Clear-Port([int]$Port, [string]$Name) {
+  # 端口上还有人，就先请走。
+  #
+  # 以前只靠 Test-Port 判断"服务在不在"，后端正忙着处理慢请求时
+  # 连不上会被误判成没在跑，于是又拉起一个。两个后端抢同一个端口，
+  # 新拉起的那个抢不到就报 "address already in use" 退出——
+  # 结果代码改了半天，跑的还是旧版本。启动前先把端口腾干净就不会有这问题。
+  $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  foreach ($c in $conns) {
+    $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
+    if ($proc -and $proc.ProcessName -match 'python|node') {
+      Write-Log "$Name 端口 $Port 还被旧进程 $($c.OwningProcess)($($proc.ProcessName)) 占用，先停掉"
+      Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Seconds 2
+    }
+  }
+}
+
 function Start-Backend {
+  Clear-Port $BackendPort '后端'
   Write-Log "启动后端 :$BackendPort"
   $p = Start-Process -FilePath 'python' `
     -ArgumentList '-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', "$BackendPort" `
@@ -101,6 +120,7 @@ function Start-Backend {
 }
 
 function Start-Frontend {
+  Clear-Port $FrontendPort '前端'
   Write-Log "启动前端 :$FrontendPort"
   $vite = Join-Path $RepoRoot 'node_modules\vite\bin\vite.js'
   $p = Start-Process -FilePath 'node' `

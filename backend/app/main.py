@@ -1,3 +1,6 @@
+import re
+import time
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -9,10 +12,32 @@ from . import models
 from .config import APP_VERSION, ADMIN_INITIAL_PASSWORD
 from .auth import verify_password
 from .routers import (auth, exams, questions, students, statistics, upload,
-                      settings, distributions, arenas, arenas_ws, billing, organizations)
+                      settings, distributions, arenas, arenas_ws, billing, organizations,
+                      images)
+
+class _Phase:
+    """打印启动各阶段耗时。
+
+    后端连的是远端库，建表/补列/校序列都要走网络。以前这些加起来要一分多钟，
+    这段时间端口还没绑上，前端点登录只会拿到"网络异常"。
+    打印出来才好知道到底卡在哪一步。
+    """
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self._t = time.time()
+        return self
+
+    def __exit__(self, *exc):
+        print(f"[启动] {self.name} 用时 {time.time() - self._t:.1f}s", file=sys.stderr)
+        return False
+
 
 # 创建所有表
-Base.metadata.create_all(bind=engine)
+with _Phase("建表 create_all"):
+    Base.metadata.create_all(bind=engine)
 
 # 默认机构套餐：导入时就写好（startup 事件里还会再兜一次），
 # 这样任何入口（脚本、测试、首次部署）都能直接看到套餐。
@@ -20,7 +45,8 @@ try:
     from . import billing as _billing
     _db = SessionLocal()
     try:
-        _billing.ensure_default_plans(_db)
+        with _Phase("默认套餐"):
+            _billing.ensure_default_plans(_db)
     finally:
         _db.close()
 except Exception as _e:  # 数据库暂时连不上不影响启动
@@ -33,9 +59,16 @@ def _backfill_total_score():
     """回填已有考试的 total_score"""
     db = SessionLocal()
     try:
+        _phase = _Phase("回填总分")
         from . import crud as _crud, models as _models
         from . import paper as _paper
-        all_exams = db.query(_models.Exam).all()
+        # 只有还没算出总分的考试才需要补。题目/考试改动时 CRUD 里本来就会
+        # 重算，启动时全量重算一遍纯属浪费（每场考试都要再查一次题目）。
+        all_exams = db.query(_models.Exam).filter(
+            (_models.Exam.total_score == 0) | (_models.Exam.total_score.is_(None))
+        ).all()
+        if not all_exams:
+            return
         for exam in all_exams:
             if getattr(exam, "random_mode", False):
                 rules = _paper.parse_rules(exam.random_rules)
@@ -43,21 +76,74 @@ def _backfill_total_score():
             else:
                 exam.total_score = _crud._calc_total_score(exam)
         db.commit()
+        _phase.__exit__()
     finally:
         db.close()
+
+_ADD_COLUMN_RE = re.compile(r"ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)", re.I)
+
+# 所有补列共用一条连接 + 一次列清单查询。
+#
+# 以前每条 DDL 各开一条连接。数据库在远端（Neon），建一次连接要 1~10 秒，
+# 一共十来条补列语句，光迁移就把启动拖到五十多秒——这段时间后端端口还没绑上，
+# 前端点登录只会拿到"网络异常"。现在全部共用一条连接、只查一次列清单，
+# 已经存在的列连 ALTER 都不用发。
+_ddl_conn = None
+_ddl_existing = None
+
+
+def _get_ddl_conn():
+    global _ddl_conn
+    if _ddl_conn is None or _ddl_conn.closed:
+        _ddl_conn = engine.connect()
+    return _ddl_conn
+
+
+def _existing_columns(conn) -> set:
+    """一次查完所有已存在的 (表, 列)。"""
+    global _ddl_existing
+    if _ddl_existing is not None:
+        return _ddl_existing
+    try:
+        rows = conn.execute(text(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public'"
+        )).fetchall()
+        _ddl_existing = {(r[0], r[1]) for r in rows}
+    except Exception:
+        _ddl_existing = set()
+    return _ddl_existing
+
 
 def _add_column(ddl: str) -> None:
     """幂等地补一列。
 
-    每条语句使用独立连接：单条 DDL 失败（如列已存在）会让该连接进入
-    aborted 事务状态，若复用同一连接，后续迁移会连环失败并被静默吞掉。
+    所有补列共用一条连接，先查 information_schema，列已经在就直接跳过
+    （大多数情况下一条 ALTER 都不用发）。单条 DDL 失败用 SAVEPOINT 回滚，
+    不影响后续语句。
     """
-    with engine.connect() as conn:
+    try:
+        conn = _get_ddl_conn()
+    except Exception:
+        return
+    try:
+        m = _ADD_COLUMN_RE.search(ddl)
+        if m:
+            table, column = m.group(1), m.group(2)
+            if (table, column) in _existing_columns(conn):
+                return
+        trans = conn.begin()
         try:
-            conn.execute(text(ddl))
-            conn.commit()
+            with conn.begin_nested():
+                conn.execute(text(ddl))
         except Exception:
+            pass
+        trans.commit()
+    except Exception:
+        try:
             conn.rollback()
+        except Exception:
+            pass
 
 
 def _sync_sequences() -> None:
@@ -71,29 +157,37 @@ def _sync_sequences() -> None:
     """
     if engine.dialect.name != "postgresql":
         return
-    with engine.connect() as conn:
-        tables = conn.execute(text(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-        )).scalars().all()
-        for table in tables:
-            try:
-                seq_name = conn.execute(
-                    text("SELECT pg_get_serial_sequence(:t, 'id')"),
-                    {"t": table},
-                ).scalar()
-                if not seq_name:
-                    continue
-                max_id = conn.execute(
-                    text(f'SELECT COALESCE(MAX(id), 0) FROM "{table}"')
-                ).scalar()
-                conn.execute(
-                    text("SELECT setval(CAST(:seq AS regclass), :val, true)"),
-                    {"seq": seq_name, "val": max_id},
-                )
-            except Exception:
-                conn.rollback()
-                continue
-        conn.commit()
+    # 原来是一张表一条 SELECT、再一条 setval：22 张表就是 66 次网络往返，
+    # 在 Neon 上光这一段就要 20 多秒。现在用一个 DO 块一次算完，
+    # 整条语句只跑一趟。
+    with _Phase("校准序列"), engine.connect() as conn:
+        try:
+            conn.execute(text("""
+                DO $$
+                DECLARE r record;
+                BEGIN
+                  FOR r IN
+                    SELECT s.oid AS seq_oid, t.relname AS tbl
+                    FROM pg_class s
+                    JOIN pg_namespace n ON n.oid = s.relnamespace
+                    JOIN pg_depend d ON d.objid = s.oid
+                        AND d.classid = 'pg_class'::regclass
+                        AND d.deptype IN ('a', 'i')
+                    JOIN pg_class t ON t.oid = d.refobjid
+                    JOIN pg_namespace tn ON tn.oid = t.relnamespace
+                    WHERE s.relkind = 'S'
+                      AND n.nspname = 'public'
+                      AND tn.nspname = 'public'
+                  LOOP
+                    EXECUTE format(
+                      'SELECT setval(%L, GREATEST((SELECT COALESCE(MAX(id), 0) FROM %I), 1), true)',
+                      r.seq_oid::regclass::text, r.tbl);
+                  END LOOP;
+                END $$;
+            """))
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
 
 with engine.connect() as conn:
@@ -200,6 +294,7 @@ app.include_router(arenas_ws.router)
 app.include_router(billing.router)
 app.include_router(billing.admin_router)
 app.include_router(organizations.router)
+app.include_router(images.router)
 
 @app.get("/uploads/{filename:path}")
 def serve_upload(filename: str):

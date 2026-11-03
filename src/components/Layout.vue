@@ -10,7 +10,7 @@
       <div class="sidebar-header">
         <div class="logo">
           <div class="logo-icon">
-            <img v-if="settingsStore.logoUrl" :src="settingsStore.logoUrl" class="logo-img" />
+            <img v-if="showLogo" :src="settingsStore.logoUrl" class="logo-img" @error="logoBroken = true" />
             <svg v-else viewBox="0 0 100 100" class="logo-svg">
               <defs>
                 <linearGradient id="sidebarLogoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -210,6 +210,11 @@ const authStore = useAuthStore()
 const settingsStore = useSettingsStore()
 
 const activeMenu = computed(() => route.path)
+
+// Logo 图片打不开时（图片托管在境外，内网常常连不上）退回内置 SVG
+const logoBroken = ref(false)
+const showLogo = computed(() => !!settingsStore.logoUrl && !logoBroken.value)
+watch(() => settingsStore.logoUrl, () => { logoBroken.value = false })
 const userName = computed(() => authStore.userName || '用户')
 const userEmployeeId = computed(() => authStore.employeeId || '')
 // 头像文字：中文习惯取名字后两字（唐金玉 -> 金玉）。

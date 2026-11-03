@@ -19,7 +19,7 @@
       <div class="login-branding">
         <div class="brand-content">
           <div class="brand-logo">
-            <img v-if="settingsStore.logoUrl" :src="settingsStore.logoUrl" class="logo-img" />
+            <img v-if="showLogo" :src="settingsStore.logoUrl" class="logo-img" @error="logoBroken = true" />
             <svg v-else viewBox="0 0 100 100" class="logo-svg">
               <defs>
                 <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -193,12 +193,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { sendSmsCode, smsLogin } from '@/api/auth'
+import { describeNetworkError } from '@/api/index'
 import { User, Lock, Check, TrendCharts, DataLine, Medal, Iphone } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -225,6 +226,20 @@ const smsError = ref('')
 const smsForm = ref({ phone: '', code: '' })
 let smsTimer = null
 
+// Logo 加载不出来（图片托管在境外，内网经常打不开）时退回内置 SVG，
+// 总比留一个破图框好看。
+const logoBroken = ref(false)
+const showLogo = computed(() => !!settingsStore.logoUrl && !logoBroken.value)
+watch(() => settingsStore.logoUrl, () => { logoBroken.value = false })
+
+// 错误提示：区分"密码不对"和"连不上服务器"，别一律叫网络异常
+const errorText = (e) => {
+  const d = e?.response?.data?.detail
+  if (typeof d === 'string' && d) return d
+  if (d && typeof d === 'object' && d.message) return d.message
+  return describeNetworkError(e)
+}
+
 const features = [
   { icon: Check, text: '智能题库管理' },
   { icon: TrendCharts, text: '数据分析可视化' },
@@ -241,8 +256,7 @@ const handleLogin = () => {
       afterLogin(res)
     } catch (e) {
       // 登录接口的错误不走全局拦截器（避免被当成 token 失效跳走），这里直接展示
-      loginError.value = e?.response?.data?.detail
-        || (e?.response ? '登录失败，请检查工号和密码' : '网络异常，请稍后重试')
+      loginError.value = errorText(e)
     } finally {
       loading.value = false
     }
@@ -309,7 +323,7 @@ const handleSmsLogin = async () => {
     authStore.applySession(res)
     afterLogin(res)
   } catch (e) {
-    smsError.value = e?.response?.data?.detail || '登录失败，请稍后重试'
+    smsError.value = errorText(e)
   } finally {
     loading.value = false
   }
