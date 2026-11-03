@@ -518,6 +518,7 @@ const handleCommand = (command) => {
 }
 
 .sidebar-header {
+  flex-shrink: 0;
   padding: var(--space-5);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
@@ -560,9 +561,29 @@ const handleCommand = (command) => {
 /* Menu */
 .sidebar-menu {
   flex: 1;
+  /* 菜单项多起来（手机端加上收费相关几个入口）会超出屏幕，
+     这里让它自己滚，并把底部"用户卡片"挤出去的问题交给下面两条规则处理。 */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: transparent;
   border: none;
   padding: var(--space-3);
+}
+
+/* 深色侧边栏里的滚动条默认很丑，细一点、只在滚动时明显 */
+.sidebar-menu::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+}
+.sidebar-menu::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .sidebar-menu :deep(.el-menu-item) {
@@ -616,8 +637,10 @@ const handleCommand = (command) => {
 }
 
 .sidebar-footer {
+  flex-shrink: 0;
   padding: var(--space-4);
   border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--dark-bg);
 }
 
 .user-card {
