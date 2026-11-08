@@ -69,6 +69,9 @@ _tmp_*
 .playwright-cli/
 .tools/
 
+# 历年真题 OCR 中间产物（几百 MB，不进版本库）
+backend/.cache/
+
 # 导出/迁移中间数据
 dists_*.json
 migration_data*.json

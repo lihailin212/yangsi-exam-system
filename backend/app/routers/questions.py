@@ -45,9 +45,35 @@ def _resolve_image_for_export(img_url: str):
 
 @router.get("")
 def list_questions(skip: int = 0, limit: int = 20, type: str = "", search: str = "", category: str = "",
-                   db: Session = Depends(get_db), _=Depends(require_admin)):
-    items, total = crud.get_questions(db, skip=skip, limit=limit, q_type=type, search=search, category=category)
-    return {"items": [schemas.QuestionOut.model_validate(q) for q in items], "total": total}
+                   paper_id: int = -1, db: Session = Depends(get_db), _=Depends(require_admin)):
+    """题库列表。paper_id=-1 表示不限出处；0 表示只看没有出处的普通题。"""
+    items, total = crud.get_questions(db, skip=skip, limit=limit, q_type=type, search=search,
+                                      category=category,
+                                      paper_id=None if paper_id < 0 else paper_id)
+    papers = {}
+    if items:
+        pids = {q.paper_id for q in items if q.paper_id}
+        if pids:
+            for p in db.query(models.QuestionPaper).filter(
+                    models.QuestionPaper.id.in_(pids)).all():
+                papers[p.id] = p.title
+    out = []
+    for q in items:
+        data = schemas.QuestionOut.model_validate(q).model_dump()
+        data["paper_title"] = papers.get(q.paper_id, "")
+        out.append(data)
+    return {"items": out, "total": total}
+
+
+@router.get("/papers")
+def list_papers(db: Session = Depends(get_db), _=Depends(require_admin)):
+    """所有题目出处卷宗（管理端筛选用）。"""
+    rows = db.query(models.QuestionPaper).order_by(
+        models.QuestionPaper.kind, models.QuestionPaper.year,
+        models.QuestionPaper.id).all()
+    return {"items": [{"id": p.id, "title": p.title, "kind": p.kind,
+                        "year": p.year, "paper_name": p.paper_name,
+                        "question_count": p.question_count} for p in rows]}
 
 # 考生自学 - 获取题目列表（只需登录即可）
 @router.get("/study")

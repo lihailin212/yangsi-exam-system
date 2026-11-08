@@ -108,7 +108,7 @@ const canStart = (exam) => {
 const loadData = async () => {
   loading.value = true
   try {
-    const res = await getExams({ skip: 0, limit: 100 })
+    const res = await getExams({ skip: 0, limit: 100, kind: 'normal' })
     tableData.value = res.items.filter(e => displayQuestionCount(e) > 0)
     
     const token = localStorage.getItem('token')

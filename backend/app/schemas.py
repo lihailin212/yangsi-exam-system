@@ -265,6 +265,8 @@ class QuestionOut(QuestionCreate):
     created_at: datetime
     analysis: Optional[str] = None
     score: Optional[float] = None  # 由调用方在返回时补充（如 get_exam 会补充）
+    paper_id: Optional[int] = None      # 出自哪份卷宗
+    paper_title: Optional[str] = None   # 卷宗展示名
     class Config:
         from_attributes = True
 

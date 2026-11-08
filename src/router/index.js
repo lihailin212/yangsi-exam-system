@@ -18,6 +18,7 @@ const routes = [
       { path: 'students', component: () => import('@/views/Students.vue'), meta: { title: '学员管理', requiresAdminOrOrgAdmin: true } },
       // ---- 收费 / 机构 ----
       { path: 'subscribe', component: () => import('@/views/Subscribe.vue'), meta: { title: '我的订阅' } },
+      { path: 'past-papers', component: () => import('@/views/PastPapers.vue'), meta: { title: '历年真题', requiresEntitlement: true } },
       { path: 'org-members', component: () => import('@/views/OrgMembers.vue'), meta: { title: '机构学员', requiresOrgAdmin: true } },
       { path: 'organizations', component: () => import('@/views/Organizations.vue'), meta: { title: '机构管理', requiresAdmin: true } },
       { path: 'subscription-plans', component: () => import('@/views/SubscriptionPlans.vue'), meta: { title: '套餐管理', requiresAdmin: true } },

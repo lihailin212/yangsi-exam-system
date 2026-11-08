@@ -55,10 +55,10 @@
             v-model="answers[currentQ.id]"
             type="textarea"
             :rows="2"
-            placeholder="请填写图中所示的名称"
+            :placeholder="hasImage ? '请填写图中所示的名称' : '请按题意填写答案'"
             maxlength="100"
           />
-          <p class="tip">填空题，按图中所示形态填写名称</p>
+          <p class="tip">{{ hasImage ? '填空题，按图中所示形态填写名称' : '填空题，按题意填写答案' }}</p>
         </div>
 
         <!-- 判断题 -->
@@ -97,6 +97,22 @@
         <div class="nav-legend">
           <span class="dot answered"></span> 已答
           <span class="dot"></span> 未答
+        </div>
+        <!--
+          交卷入口：桌面端只有底部「上一题/下一题」，翻到最后一题才看得到提交，
+          很多人做完直接找按钮找不到就干等了。这里固定放一个，
+          并把未答题数摆出来，避免稀里糊涂交卷。
+        -->
+        <div class="nav-actions">
+          <div class="nav-unanswered" :class="{ warn: unansweredCount > 0 }">
+            <template v-if="unansweredCount > 0">
+              还有 {{ unansweredCount }} 题未作答
+            </template>
+            <template v-else>已全部作答</template>
+          </div>
+          <el-button type="success" class="nav-submit-btn" @click="handleSubmit" :loading="submitting">
+            交卷
+          </el-button>
         </div>
       </div>
     </div>
@@ -144,6 +160,15 @@
               :class="{ answered: isAnswered(q), current: i === currentIndex }"
               @click="goToQuestion(i)"
             >{{ i + 1 }}</div>
+          </div>
+          <!-- 答题卡里也能直接交卷，不用翻到最后一题 -->
+          <div class="mobile-nav-actions">
+            <span class="mobile-nav-tip" :class="{ warn: unansweredCount > 0 }">
+              <template v-if="unansweredCount > 0">还有 {{ unansweredCount }} 题未作答</template>
+              <template v-else>已全部作答</template>
+            </span>
+            <el-button type="success" size="small" class="mobile-submit-btn"
+                       @click="handleSubmit" :loading="submitting">交卷</el-button>
           </div>
         </div>
       </div>
@@ -260,6 +285,9 @@ const typeTagMap = {
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 const currentQ = computed(() => questions.value[currentIndex.value] || {})
+// 看图填空 vs 纯文本填空：题干里有没有图，决定提示语怎么说
+const hasImage = computed(() => /<img/i.test(currentQ.value?.content || ''))
+
 const currentQContent = computed(() => {
   const content = currentQ.value.content || ''
   if (!content) return ''
@@ -291,6 +319,11 @@ const isAnswered = (q) => {
 
 const answeredCount = computed(() => {
   return questions.value.filter(q => isAnswered(q)).length
+})
+
+// 未答题数：交卷前要明确告诉考生还剩几道没做
+const unansweredCount = computed(() => {
+  return questions.value.filter(q => !isAnswered(q)).length
 })
 
 // 展开/收起移动端答题卡
@@ -333,11 +366,15 @@ const buildAnswers = () => {
 }
 
 const handleSubmit = async () => {
-    const unanswered = questions.value.filter(q => !isAnswered(q)).length
+  const unanswered = questions.value.filter(q => !isAnswered(q)).length
   if (unanswered > 0) {
     // 到点自动提交时不再弹确认框，直接交卷
-      if (timeLeft.value > 0) {
-      await ElMessageBox.confirm(`还有 ${unanswered} 道题未作答，确定提交？`, '提示', { type: 'warning' })
+    if (timeLeft.value > 0) {
+      try {
+        await ElMessageBox.confirm(`还有 ${unanswered} 道题未作答，确定提交？`, '提示', { type: 'warning' })
+      } catch {
+        return            // 用户点了「取消」，什么都不做
+      }
     }
   }
   submitting.value = true
@@ -541,6 +578,11 @@ onUnmounted(() => {
   align-self: flex-start;
   position: sticky;
   top: 70px;
+  /* 一百道题的题号格有二十来行，整块答题卡比一屏还高，
+     底下的交卷按钮会被挤到屏幕外看不见。这里让答题卡自己内部滚动，
+     交卷按钮吸在卡片底部，一直露在视野里。 */
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
 }
 
 .nav-title { font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #303133; }
@@ -585,6 +627,32 @@ onUnmounted(() => {
 }
 
 .dot.answered { background: #409EFF; }
+
+/* 桌面端答题卡底部的交卷区 */
+.nav-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #ebeef5;
+  /* 吸在答题卡可视区底部，题号格再多也压不住交卷按钮 */
+  position: sticky;
+  bottom: -16px;
+  background: #fff;
+  padding-bottom: 4px;
+}
+
+.nav-unanswered {
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.nav-unanswered.warn { color: #E6A23C; }
+
+.nav-submit-btn {
+  width: 100%;
+  font-weight: 500;
+}
 
 .exam-footer {
   background: #fff;
@@ -681,6 +749,31 @@ onUnmounted(() => {
 
 .mobile-nav-dot.answered { background: #409EFF; color: #fff; }
 .mobile-nav-dot.current { outline: 2px solid #409EFF; }
+
+/* 移动端答题卡底部的交卷区 */
+.mobile-nav-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
+
+.mobile-nav-tip {
+  font-size: 12px;
+  color: #909399;
+}
+
+.mobile-nav-tip.warn { color: #E6A23C; }
+
+.mobile-submit-btn {
+  flex: 0 0 auto;
+  min-width: 84px;
+  min-height: 36px;
+  font-weight: 500;
+}
 
 .loading-tip {
   flex: 1;

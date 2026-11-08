@@ -66,6 +66,10 @@ class Exam(Base):
     total_score = Column(Float, default=0)           # 存储总分（创建/更新时计算）
     random_mode = Column(Boolean, default=False)     # 每人随机卷：题数固定、题目随机
     random_rules = Column(Text, default="[]")        # 抽题规则 JSON：[{category,type,count}]
+    # normal=正式考试；past_paper=历年真题卷（单独入口，不混在正式考试列表里）
+    kind = Column(String, default="normal")   # 索引在 main.py 里用 _add_index 建，模型不再重复声明
+    # 关联的卷宗（历年真题）。null = 普通考试
+    paper_id = Column(Integer, ForeignKey("question_papers.id"), nullable=True)   # 索引同上
     created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
     questions = relationship("Question", secondary=exam_question, back_populates="exams")
@@ -99,8 +103,11 @@ class Question(Base):
     answer = Column(String)     # 单选/判断: "A" / "正确"; 多选: "A,B"
     analysis = Column(Text, default="")
     category = Column(String, default="")
+    # 出自哪份卷宗（历年真题卷 / 专业知识清单）。null = 普通题库题
+    paper_id = Column(Integer, ForeignKey("question_papers.id"), nullable=True)   # 索引同上
     created_at = Column(DateTime, default=datetime.utcnow)
     exams = relationship("Exam", secondary=exam_question, back_populates="questions")
+    paper = relationship("QuestionPaper", back_populates="questions")
 
 class ExamRecord(Base):
     __tablename__ = "exam_records"
@@ -248,6 +255,30 @@ class ArenaLog(Base):
     detail = Column(Text, default="")  # 详细信息JSON
     timestamp = Column(DateTime, default=datetime.utcnow)
     arena = relationship("Arena", back_populates="logs")
+
+
+class QuestionPaper(Base):
+    """题目卷宗：历年真题卷 / 专业知识清单。
+
+    真题 PDF 是跨年合订的（2010 的文件尾部就是 2011 基础知识），
+    所以"哪道题出自哪张卷"必须单独建一张表记，不能靠文件名推断。
+    """
+    __tablename__ = "question_papers"
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True)   # 如 2010_ji_chu
+    year = Column(Integer, index=True)              # 年份
+    level = Column(String, default="初级")           # 初级 / 中级
+    paper_name = Column(String, default="")          # 基础知识 / 相关专业知识 / ...
+    title = Column(String)                           # 展示名
+    kind = Column(String, default="paper")           # paper=真题卷 / knowledge=知识清单
+    source_file = Column(String, default="")         # 来源 PDF
+    source_title = Column(String, default="")        # 页面上的原始标题
+    page_from = Column(Integer, default=0)
+    page_to = Column(Integer, default=0)
+    question_count = Column(Integer, default=0)
+    exam_id = Column(Integer, ForeignKey("exams.id"), nullable=True)  # 对应的考试卷
+    created_at = Column(DateTime, default=datetime.utcnow)
+    questions = relationship("Question", back_populates="paper")
 
 
 class Organization(Base):

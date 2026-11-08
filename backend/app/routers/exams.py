@@ -15,8 +15,13 @@ router = APIRouter(prefix="/api/exams", tags=["exams"])
 record_router = APIRouter(prefix="/api/exam-records", tags=["records"])
 
 @router.get("")
-def list_exams(skip: int = 0, limit: int = 20, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    exams, total = crud.get_exams(db, skip=skip, limit=limit)
+def list_exams(skip: int = 0, limit: int = 20, kind: str = "normal",
+               db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """kind=normal 只返回正式考试；kind=past_paper 只返回历年真题卷。
+
+    历年真题走单独的「历年真题」页面，不混在正式考试列表里。
+    """
+    exams, total = crud.get_exams(db, skip=skip, limit=limit, kind=kind)
     result = []
     for e in exams:
         result.append({

@@ -26,6 +26,12 @@
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
         </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-select v-model="filterPaper" placeholder="来源卷宗" clearable @change="loadData" style="width:100%">
+            <el-option label="普通题库题（无出处）" :value="0" />
+            <el-option v-for="p in papers" :key="p.id" :label="p.title" :value="p.id" />
+          </el-select>
+        </el-col>
         <el-col :xs="8" :sm="4">
           <el-select v-model="filterType" placeholder="题型" clearable @change="loadData" style="width:100%">
             <el-option label="单选题" value="single" />
@@ -88,6 +94,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="category" label="分类" width="100" />
+        <el-table-column label="来源" width="180">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.paper_title" :content="row.paper_title" placement="top">
+              <el-tag size="small" type="warning">{{ shortPaper(row.paper_title) }}</el-tag>
+            </el-tooltip>
+            <span v-else style="color: var(--neutral-400, #c0c4cc)">—</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="answer" label="答案" width="80" />
         <el-table-column label="操作" width="200">
           <template #default="{ row }">
@@ -271,7 +285,7 @@
 <script setup>
 import { ref, reactive, onMounted, nextTick, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getQuestions, createQuestion, updateQuestion, deleteQuestion, importQuestions, exportQuestions, getCategories, createCategory, renameCategory, deleteCategory } from '@/api/questions'
+import { getQuestions, createQuestion, updateQuestion, deleteQuestion, importQuestions, exportQuestions, getCategories, getQuestionPapers, createCategory, renameCategory, deleteCategory } from '@/api/questions'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -283,8 +297,25 @@ const pageSize = ref(15)
 const search = ref('')
 const filterType = ref('')
 const filterCategory = ref('')
+// 来源卷宗筛选：-1 不限；0 只看普通题库题
+const filterPaper = ref(-1)
 const dialogVisible = ref(false)
 const importDialogVisible = ref(false)
+
+// 卷宗名很长，表格里只显示前面一段，鼠标悬停看全名
+const shortPaper = (title) => {
+  if (!title) return ''
+  return title.length > 12 ? title.slice(0, 12) + '…' : title
+}
+
+const loadPapers = async () => {
+  try {
+    const res = await getQuestionPapers()
+    papers.value = res.items || []
+  } catch (e) {
+    papers.value = []
+  }
+}
 const editingId = ref(null)
 const formRef = ref(null)
 import ImagePreview from '@/components/ImagePreview.vue'
@@ -305,6 +336,7 @@ const categoryDialogVisible = ref(false)
 const renameDialogVisible = ref(false)
 const createDialogVisible = ref(false)
 const categories = ref([])
+const papers = ref([])
 
 // 将分类转换为级联选择器需要的树形结构
 const categoryOptions = computed(() => {
@@ -403,6 +435,7 @@ const loadData = async () => {
       type: filterType.value,
       search: search.value,
       category: filterCategory.value,
+      paper_id: filterPaper.value,
     })
     tableData.value = fixImageUrls(res.items)
     total.value = res.total
@@ -911,6 +944,7 @@ watch(categoryDialogVisible, (val) => {
 onMounted(() => {
   loadData()
   loadCategories()
+  loadPapers()
   const style = document.createElement('style')
   style.id = 'editor-tooltip-style'
   style.textContent = `

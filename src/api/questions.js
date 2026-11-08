@@ -6,6 +6,8 @@ const SLOW_TIMEOUT = 60000
 
 export const getQuestions = (params) => request.get('/questions', { params, timeout: SLOW_TIMEOUT })
 export const getCategories = () => request.get('/questions/categories', { timeout: SLOW_TIMEOUT })
+// 题目出处卷宗（历年真题卷 / 专业知识清单），管理端筛选用
+export const getQuestionPapers = () => request.get('/questions/papers', { timeout: SLOW_TIMEOUT })
 export const createQuestion = (data) => request.post('/questions', data)
 export const updateQuestion = (id, data) => request.put(`/questions/${id}`, data)
 export const deleteQuestion = (id) => request.delete(`/questions/${id}`)

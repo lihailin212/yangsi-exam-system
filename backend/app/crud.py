@@ -151,7 +151,7 @@ def fill_answer_matches(given: str, standard: str) -> bool:
     return False
 
 
-def _questions_filter(db: Session, q_type="", search="", category=""):
+def _questions_filter(db: Session, q_type="", search="", category="", paper_id=None):
     """题目的公共筛选条件。
 
     列表和"按题号取 id"共用同一套条件，保证题号编号和列表顺序完全一致。
@@ -163,6 +163,12 @@ def _questions_filter(db: Session, q_type="", search="", category=""):
         q = q.filter(models.Question.type == q_type)
     if search:
         q = q.filter(models.Question.content.contains(search))
+    if paper_id is not None:
+        # 按出处卷宗筛选。paper_id=0 表示"没有出处"（普通题库题）
+        if paper_id == 0:
+            q = q.filter(models.Question.paper_id.is_(None))
+        else:
+            q = q.filter(models.Question.paper_id == paper_id)
     if category:
         # 检查是否为父级分类（查询所有以此开头的子分类）
         if category.endswith('/'):
@@ -177,8 +183,10 @@ def _questions_filter(db: Session, q_type="", search="", category=""):
     return q
 
 
-def get_questions(db: Session, skip=0, limit=100, q_type="", search="", category=""):
-    q = _questions_filter(db, q_type=q_type, search=search, category=category)
+def get_questions(db: Session, skip=0, limit=100, q_type="", search="", category="",
+                  paper_id=None):
+    q = _questions_filter(db, q_type=q_type, search=search, category=category,
+                           paper_id=paper_id)
     total = q.count()
     return q.order_by(models.Question.id.desc()).offset(skip).limit(limit).all(), total
 
@@ -305,9 +313,19 @@ def create_category(db: Session, category_name: str):
 
 
 # ---- Exam ----
-def get_exams(db: Session, skip=0, limit=100):
-    exams = db.query(models.Exam).order_by(models.Exam.id.desc()).offset(skip).limit(limit).all()
-    total = db.query(models.Exam).count()
+def get_exams(db: Session, skip=0, limit=100, kind="normal"):
+    """列出考试。
+
+    kind="normal" 只要正式考试（历年真题卷不算，它们走单独入口）；
+    kind="past_paper" 只要历年真题卷；kind="" 要全部。
+    """
+    q = db.query(models.Exam)
+    if kind == "normal":
+        q = q.filter(models.Exam.kind == "normal")
+    elif kind == "past_paper":
+        q = q.filter(models.Exam.kind == "past_paper")
+    exams = q.order_by(models.Exam.id.desc()).offset(skip).limit(limit).all()
+    total = q.count()
     return exams, total
 
 def get_exam(db: Session, exam_id: int):

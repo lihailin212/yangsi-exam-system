@@ -13,7 +13,7 @@ from .config import APP_VERSION, ADMIN_INITIAL_PASSWORD
 from .auth import verify_password
 from .routers import (auth, exams, questions, students, statistics, upload,
                       settings, distributions, arenas, arenas_ws, billing, organizations,
-                      images)
+                      images, past_papers)
 
 class _Phase:
     """打印启动各阶段耗时。
@@ -131,7 +131,15 @@ def _add_column(ddl: str) -> None:
         if m:
             table, column = m.group(1), m.group(2)
             if (table, column) in _existing_columns(conn):
+                if conn.in_transaction():
+                    conn.rollback()   # information_schema 查询开了隐式事务
                 return
+        # 上面的查询会开一个隐式事务，conn.begin() 遇到它会直接抛
+        # "This connection has already initialized a SQLAlchemy Transaction()"。
+        # 异常被吞掉之后，这一条 ALTER 就没执行——补列于是隔一条失败一条，
+        # 缺的列要等下次发版才补上。先把事务收掉再开新的。
+        if conn.in_transaction():
+            conn.rollback()
         trans = conn.begin()
         try:
             with conn.begin_nested():
@@ -215,6 +223,12 @@ with engine.connect() as conn:
     except Exception:
         conn.rollback()
 
+# 新列必须先补上：_backfill_total_score() 会 SELECT exams 全表，
+# 模型里声明了新列而旧表还没有时，直接报 "no such column"。
+_add_column("ALTER TABLE questions ADD COLUMN paper_id INTEGER REFERENCES question_papers(id)")
+_add_column("ALTER TABLE exams ADD COLUMN kind VARCHAR(20) DEFAULT 'normal'")
+_add_column("ALTER TABLE exams ADD COLUMN paper_id INTEGER REFERENCES question_papers(id)")
+
 _backfill_total_score()
 
 _add_column("ALTER TABLE exams ADD COLUMN retake_limit INTEGER DEFAULT 0")
@@ -231,6 +245,7 @@ _add_column("ALTER TABLE users ADD COLUMN trial_expires_at TIMESTAMP")
 _add_column("ALTER TABLE users ADD COLUMN registered_via VARCHAR(20) DEFAULT 'admin'")
 
 
+
 def _add_index(ddl: str) -> None:
     """幂等地建索引。Postgres 与 SQLite 都支持 CREATE INDEX IF NOT EXISTS。"""
     with engine.connect() as conn:
@@ -244,6 +259,9 @@ def _add_index(ddl: str) -> None:
 # 手机号唯一（Postgres 里 NULL 不参与唯一约束，存量工号账号不受影响）
 _add_index("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_phone ON users (phone)")
 _add_index("CREATE INDEX IF NOT EXISTS ix_users_organization ON users (organization_id)")
+_add_index("CREATE INDEX IF NOT EXISTS ix_questions_paper ON questions (paper_id)")
+_add_index("CREATE INDEX IF NOT EXISTS ix_exams_kind ON exams (kind)")
+_add_index("CREATE INDEX IF NOT EXISTS ix_exams_paper ON exams (paper_id)")
 _sync_sequences()
 
 # 布尔列历史上允许为 NULL，序列化时会直接报错，这里回填并收紧约束
@@ -295,6 +313,7 @@ app.include_router(billing.router)
 app.include_router(billing.admin_router)
 app.include_router(organizations.router)
 app.include_router(images.router)
+app.include_router(past_papers.router)
 
 @app.get("/uploads/{filename:path}")
 def serve_upload(filename: str):

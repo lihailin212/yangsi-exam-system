@@ -271,6 +271,7 @@ const allMenuItems = [
   { path: '/settings', title: '系统设置', icon: 'Setting', roles: ['admin'] },
   // ---- 收费 / 机构 ----
   { path: '/subscribe', title: '我的订阅', icon: 'Wallet' },
+  { path: '/past-papers', title: '历年真题', icon: 'Notebook' },
   { path: '/org-members', title: '机构学员', icon: 'UserFilled', roles: ['admin', 'orgAdmin'] },
   { path: '/organizations', title: '机构管理', icon: 'OfficeBuilding', roles: ['admin'] },
   { path: '/subscription-plans', title: '套餐管理', icon: 'Goods', roles: ['admin'] },
