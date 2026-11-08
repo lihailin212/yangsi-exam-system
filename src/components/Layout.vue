@@ -265,6 +265,7 @@ const allMenuItems = [
   { path: '/exams', title: '考试管理', icon: 'Edit', roles: ['admin'] },
   { path: '/arena', title: '专业擂台赛', icon: 'Trophy', roles: ['admin'] },
   { path: '/my-exams', title: '我的考试', icon: 'Tickets' },
+  { path: '/wrong-questions', title: '我的错题本', icon: 'Collection' },
   { path: '/self-study', title: '考生自学', icon: 'Memo' },
   { path: '/statistics', title: '数据统计', icon: 'DataAnalysis', roles: ['admin'] },
   { path: '/students', title: '学员管理', icon: 'User', roles: ['admin', 'orgAdmin'] },

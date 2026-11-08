@@ -318,6 +318,11 @@ def get_exams(db: Session, skip=0, limit=100, kind="normal"):
 
     kind="normal" 只要正式考试（历年真题卷不算，它们走单独入口）；
     kind="past_paper" 只要历年真题卷；kind="" 要全部。
+
+    注意：这里只取考试本身，题数和参考人数用 count_exam_stats 单独查。
+    在这里顺手读 len(exam.questions)/len(exam.records) 会触发逐场懒加载，
+    59 场考试就是 118 次额外往返，数据库在远端时列表接口要等一分多钟，
+    前端的 loading 遮罩一直不撤，页面看着就是一片灰。
     """
     q = db.query(models.Exam)
     if kind == "normal":
@@ -327,6 +332,26 @@ def get_exams(db: Session, skip=0, limit=100, kind="normal"):
     exams = q.order_by(models.Exam.id.desc()).offset(skip).limit(limit).all()
     total = q.count()
     return exams, total
+
+
+def count_exam_stats(db, exam_ids):
+    """一次查出这些考试的题数和参考人数，返回 {exam_id: (题数, 参考人数)}。
+
+    两条 GROUP BY 就够，不要逐场 exam.questions/exam.records 去数。
+    """
+    if not exam_ids:
+        return {}
+    q_counts = dict(
+        db.query(models.exam_question.c.exam_id, func.count())
+          .filter(models.exam_question.c.exam_id.in_(exam_ids))
+          .group_by(models.exam_question.c.exam_id).all()
+    )
+    r_counts = dict(
+        db.query(models.ExamRecord.exam_id, func.count())
+          .filter(models.ExamRecord.exam_id.in_(exam_ids))
+          .group_by(models.ExamRecord.exam_id).all()
+    )
+    return {eid: (q_counts.get(eid, 0), r_counts.get(eid, 0)) for eid in exam_ids}
 
 def get_exam(db: Session, exam_id: int):
     return db.query(models.Exam).filter(models.Exam.id == exam_id).first()
@@ -477,20 +502,26 @@ def create_record(db: Session, exam, user_id: int, answers_str: str, at=None,
         scoring = get_scoring_questions(db, exam.id)
         total_score = exam.total_score
 
+    # 顺手把对错分出来：错题进错题本，做对的题把错题本里的旧记录标成已掌握。
+    # 判分口径必须和上面完全一致，否则会出现"考试算对但错题本里还算错"的情况。
+    wrong_rows = []
+    right_ids = []
     for qid, qtype, correct_answer in scoring:
         question_score = score_map.get(qtype, 10)  # 默认10分
         user_ans = answers.get(str(qid), "")
         if qtype == "multiple":
             correct = set(correct_answer.split(","))
             given = set(user_ans.split(",")) if user_ans else set()
-            if correct == given:
-                earned_score += question_score
+            ok = (correct == given)
         elif qtype == "fill":
-            if fill_answer_matches(user_ans, correct_answer):
-                earned_score += question_score
+            ok = fill_answer_matches(user_ans, correct_answer)
         else:
-            if str(user_ans).strip() == str(correct_answer).strip():
-                earned_score += question_score
+            ok = str(user_ans).strip() == str(correct_answer).strip()
+        if ok:
+            earned_score += question_score
+            right_ids.append(qid)
+        else:
+            wrong_rows.append((qid, str(user_ans or "")))
     record = models.ExamRecord(
         exam_id=exam.id,
         user_id=user_id,
@@ -501,8 +532,168 @@ def create_record(db: Session, exam, user_id: int, answers_str: str, at=None,
     if at is not None:
         record.submitted_at = at
     db.add(record)
+    # 错题本与成绩一起提交：交卷成功但错题没记上，下次就看不到这道题了。
+    record_wrong_questions(db, user_id, exam.id, wrong_rows)
+    mark_mastered_questions(db, user_id, right_ids)
     db.commit()
     return record
+
+
+# ---- 错题本 ----
+#
+# 错题记录在交卷判分时落库：每道做错的题记一条，重复做错就累加次数。
+# 判分只用到"题号 + 题型 + 正确答案"，这里同样只取这几个字段，
+# 不把题干一起拉回来（数据库在远端，载荷越大往返越慢）。
+
+
+def record_wrong_questions(db, user_id, exam_id, wrong_rows):
+    """把做错的题写进错题本；同题再错就累加次数。
+
+    一次批量查 + 批量写，不要一题一次往返——一次交卷错几十题时，
+    逐题 upsert 会把交卷接口拖到几十秒。
+    """
+    if not wrong_rows:
+        return
+    qids = [qid for qid, _ in wrong_rows]
+    now = utc_now()
+    existing = {
+        r.question_id: r
+        for r in db.query(models.WrongQuestion).filter(
+            models.WrongQuestion.user_id == user_id,
+            models.WrongQuestion.question_id.in_(qids)).all()
+    }
+    for qid, user_ans in wrong_rows:
+        row = existing.get(qid)
+        if row is None:
+            db.add(models.WrongQuestion(
+                user_id=user_id, question_id=qid, exam_id=exam_id,
+                wrong_answer=user_ans or "", wrong_count=1, status="wrong",
+                last_wrong_at=now))
+        else:
+            row.exam_id = exam_id
+            row.wrong_answer = user_ans or ""
+            row.wrong_count = (row.wrong_count or 0) + 1
+            row.status = "wrong"          # 又做错了，重新回到待练
+            row.mastered_at = None
+            row.last_wrong_at = now
+
+
+def mark_mastered_questions(db, user_id, question_ids):
+    """做对的题从错题本里标记为"已掌握"（记录保留，只是不再计入待练）。"""
+    if not question_ids:
+        return
+    db.query(models.WrongQuestion).filter(
+        models.WrongQuestion.user_id == user_id,
+        models.WrongQuestion.question_id.in_(question_ids),
+        models.WrongQuestion.status != "mastered",
+    ).update({"status": "mastered", "mastered_at": utc_now()},
+             synchronize_session=False)
+
+
+def get_wrong_questions(db, user_id, status="wrong", skip=0, limit=20,
+                         q_type="", category=""):
+    """列某个账号的错题。status="" 表示不限（错题 + 已掌握）。
+
+    按题型/分类筛选时直接 join 题目表过滤，不要把全部错题拉回内存再筛：
+    错题攒到几百条以后，"拉回来再筛"会让每次翻页都传好几 MB。
+    """
+    q = db.query(models.WrongQuestion).filter(
+        models.WrongQuestion.user_id == user_id)
+    if status:
+        q = q.filter(models.WrongQuestion.status == status)
+    if q_type or category:
+        q = q.join(models.Question,
+                   models.Question.id == models.WrongQuestion.question_id)
+        if q_type:
+            q = q.filter(models.Question.type == q_type)
+        if category:
+            q = q.filter(models.Question.category == category)
+    total = q.count()
+    rows = (q.order_by(models.WrongQuestion.last_wrong_at.desc(),
+                       models.WrongQuestion.id.desc())
+             .offset(skip).limit(limit).all())
+    if not rows:
+        return [], 0
+
+    # 题目内容/正确答案/解析一起取出来，前端要显示题干并支持导出。
+    qmap = {
+        qq.id: qq for qq in db.query(models.Question).filter(
+            models.Question.id.in_([r.question_id for r in rows])).all()
+    }
+    exam_ids = {r.exam_id for r in rows if r.exam_id}
+    emap = {}
+    if exam_ids:
+        emap = {e.id: e.title for e in db.query(models.Exam).filter(
+            models.Exam.id.in_(list(exam_ids))).all()}
+
+    items = []
+    for r in rows:
+        question = qmap.get(r.question_id)
+        if question is None:
+            continue   # 题被删了，跳过
+        items.append({
+            "id": r.id,
+            "question_id": r.question_id,
+            "type": question.type,
+            "content": question.content,
+            "options": question.options,
+            "answer": question.answer,
+            "analysis": question.analysis,
+            "category": question.category,
+            "wrong_answer": r.wrong_answer or "",
+            "wrong_count": r.wrong_count or 1,
+            "status": r.status,
+            "exam_id": r.exam_id,
+            "exam_title": emap.get(r.exam_id, ""),
+            "last_wrong_at": r.last_wrong_at,
+            "mastered_at": r.mastered_at,
+            "created_at": r.created_at,
+        })
+    return items, total
+
+
+def get_wrong_question_stats(db, user_id):
+    """错题本的汇总数字：总数 / 已掌握数 / 按题型分布。"""
+    rows = db.query(
+        models.WrongQuestion.status,
+        models.Question.type,
+        func.count(),
+    ).join(
+        models.Question, models.Question.id == models.WrongQuestion.question_id
+    ).filter(
+        models.WrongQuestion.user_id == user_id
+    ).group_by(models.WrongQuestion.status, models.Question.type).all()
+    by_type = {}
+    wrong_total = 0
+    mastered_total = 0
+    for status, qtype, cnt in rows:
+        by_type.setdefault(qtype or "", 0)
+        by_type[qtype or ""] += cnt
+        if status == "mastered":
+            mastered_total += cnt
+        else:
+            wrong_total += cnt
+    return {
+        # all_total 是这个账号的全部错题记录数（待复习 + 已掌握）。
+        # 前端"记录总数"那一格要用它：列表接口返回的 total 是跟着筛选条件走的，
+        # 直接拿来当总数会随筛选变，切到"已掌握"时总数就变成已掌握数了。
+        "all_total": wrong_total + mastered_total,
+        "wrong_total": wrong_total,
+        "mastered_total": mastered_total,
+        "by_type": by_type,
+    }
+
+
+def delete_wrong_question(db, user_id, wrong_id):
+    """删掉一条错题记录（只允许删自己的）。"""
+    row = db.query(models.WrongQuestion).filter(
+        models.WrongQuestion.id == wrong_id,
+        models.WrongQuestion.user_id == user_id).first()
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
 
 
 # ---- 随机卷（每人题数相同、题目随机） ----
@@ -2543,6 +2734,71 @@ def export_exam_excel(db: Session, exam_id: int):
 
     import io
     buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def export_wrong_questions_excel(db, user_id, items):
+    """把错题记录导成 Excel。
+
+    列：题号/题型/分类/题干/选项/正确答案/我的错答/错误次数/来源考试/最近错误时间。
+    题干是富文本 HTML，导出前转成纯文本，图片换成 "[图片]" 标记
+    （跟成绩导出一个口径，Excel 里塞 <img> 标签只会变成乱码）。
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "错题记录"
+
+    header_fill = PatternFill("solid", fgColor="13B7A5")
+    header_font = Font(color="FFFFFF", bold=True)
+    headers = ["题号", "题型", "分类", "题干", "选项", "正确答案", "我的错答",
+               "错误次数", "来源考试", "最近错误时间", "状态"]
+    for col, name in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=name)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    type_label = {"single": "单选题", "multiple": "多选题",
+                  "judgment": "判断题", "fill": "填空题"}
+
+    for idx, it in enumerate(items, start=2):
+        text, img_links = _export_plain_text_and_links(it.get("content", ""))
+        options = it.get("options") or "{}"
+        try:
+            opts = json.loads(options)
+            opt_text = "\n".join("%s. %s" % (k, opts[k]) for k in sorted(opts))
+        except (TypeError, ValueError):
+            opt_text = options
+        if img_links:
+            text = text + "\n[图片] " + ", ".join(img_links[:3])
+        ws.cell(row=idx, column=1, value=it.get("question_id"))
+        ws.cell(row=idx, column=2, value=type_label.get(it.get("type"), it.get("type")))
+        ws.cell(row=idx, column=3, value=it.get("category") or "")
+        ws.cell(row=idx, column=4, value=text)
+        ws.cell(row=idx, column=5, value=opt_text)
+        ws.cell(row=idx, column=6, value=it.get("answer") or "")
+        ws.cell(row=idx, column=7, value=it.get("wrong_answer") or "（未作答）")
+        ws.cell(row=idx, column=8, value=it.get("wrong_count") or 1)
+        ws.cell(row=idx, column=9, value=it.get("exam_title") or "")
+        ws.cell(row=idx, column=10, value=it.get("last_wrong_at"))
+        ws.cell(row=idx, column=11,
+                value="已掌握" if it.get("status") == "mastered" else "待复习")
+
+    widths = [8, 10, 14, 60, 30, 12, 14, 10, 28, 20, 10]
+    for col, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(col)].width = w
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    import io as _io
+    buf = _io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     return buf

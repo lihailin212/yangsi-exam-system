@@ -22,8 +22,13 @@ def list_exams(skip: int = 0, limit: int = 20, kind: str = "normal",
     历年真题走单独的「历年真题」页面，不混在正式考试列表里。
     """
     exams, total = crud.get_exams(db, skip=skip, limit=limit, kind=kind)
+    # 题数和参考人数一次查完。逐场去数（len(e.questions)/len(e.records)）会触发
+    # 逐场懒加载，59 场考试就是 118 次额外往返，列表接口要等一分多钟，
+    # 前端 loading 遮罩一直不撤，"我的考试"页看着就是一片灰。
+    stats = crud.count_exam_stats(db, [e.id for e in exams])
     result = []
     for e in exams:
+        q_count, r_count = stats.get(e.id, (0, 0))
         result.append({
             "id": e.id,
             "title": e.title,
@@ -35,13 +40,13 @@ def list_exams(skip: int = 0, limit: int = 20, kind: str = "normal",
             "retake_limit": e.retake_limit,
             "random_mode": bool(getattr(e, "random_mode", False)),
             "created_at": e.created_at,
-            "question_count": len(e.questions),
+            "question_count": q_count,
             # 随机卷：每位考生实际要答的题数（各条抽题规则数量之和）
             "paper_question_count": (
                 paper_lib.per_user_question_count(getattr(e, "random_rules", None))
-                if getattr(e, "random_mode", False) else len(e.questions)
+                if getattr(e, "random_mode", False) else q_count
             ),
-            "participant_count": len(e.records),
+            "participant_count": r_count,
         })
     return {"items": result, "total": total}
 
@@ -122,6 +127,10 @@ def start_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends
     exam = crud.get_exam(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="考试不存在")
+    # 错题练习卷是给本人生成的，别人拿到 id 也不能做
+    if (getattr(exam, "kind", "") == "wrong_practice"
+            and exam.created_by != current_user.id):
+        raise HTTPException(status_code=403, detail="这张错题练习卷不属于您")
     now = app_now()
     if exam.start_time and exam.start_time > now:
         raise HTTPException(status_code=403, detail="考试尚未开始")
@@ -325,6 +334,21 @@ def get_exam_records(exam_id: int, db: Session = Depends(get_db), _=Depends(requ
             "submitted_at": r.submitted_at,
         })
     return result
+
+@record_router.get("/my-scores")
+def get_my_scores(db: Session = Depends(get_db),
+                  current_user=Depends(get_current_user)):
+    """本人在各场考试里的最好成绩，一次查完：{考试id: 分数}。
+
+    "我的考试"页要判断每场考过没有。以前是每场考试发一次请求，
+    59 场就是 59 次往返，页面要等好几分钟；现在一次就够。
+    """
+    from ..models import ExamRecord
+    from sqlalchemy import func
+    rows = db.query(ExamRecord.exam_id, func.max(ExamRecord.score)).filter(
+        ExamRecord.user_id == current_user.id).group_by(ExamRecord.exam_id).all()
+    return {str(exam_id): score for exam_id, score in rows}
+
 
 @record_router.get("/recent")
 def get_recent_records(db: Session = Depends(get_db), _=Depends(get_current_user)):

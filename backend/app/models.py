@@ -132,6 +132,31 @@ class ExamDistribution(Base):
     user = relationship("User")
 
 
+class WrongQuestion(Base):
+    """某个账号的错题记录（错题本）。
+
+    每个账号一份：同一道题做错多次只留一条，错误次数累加。
+    status = "wrong" 表示还没做对（错题本默认只显示这些）；
+    "mastered" 表示后来在别的考试里做对了，记录留着但不计入错题本。
+    """
+    __tablename__ = "wrong_questions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    question_id = Column(Integer, ForeignKey("questions.id"), index=True)
+    # 来源考试：最近一次做错的那场。考试被删了就置空（ON DELETE SET NULL），
+    # 错题本身要留着，不然题库一调整错题就跟着没了。
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="SET NULL"), nullable=True)
+    wrong_answer = Column(String, default="")   # 最近一次错答，空表示没作答
+    wrong_count = Column(Integer, default=1)    # 一共错过几次
+    status = Column(String, default="wrong")    # wrong / mastered
+    last_wrong_at = Column(DateTime, default=datetime.utcnow)
+    mastered_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("user_id", "question_id", name="uq_wrong_question"),
+    )
+
+
 class ExamAttempt(Base):
     """考生一次作答会话（进入考试 → 交卷）。
 

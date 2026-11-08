@@ -64,8 +64,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getExams, getExam } from '@/api/exams'
-import request from '@/api'
+import { getExams } from '@/api/exams'
+import { getMyScores } from '@/api/examScores'
+import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const loading = ref(false)
@@ -110,27 +111,23 @@ const loadData = async () => {
   try {
     const res = await getExams({ skip: 0, limit: 100, kind: 'normal' })
     tableData.value = res.items.filter(e => displayQuestionCount(e) > 0)
-    
-    const token = localStorage.getItem('token')
-    const userId = JSON.parse(atob(token.split('.')[1])).sub
-    
+
+    // 成绩一次拿回，不要每场考试再发两次请求。
+    // 以前是 59 场考试 × 2 次串行请求，数据库在远端时页面要等好几分钟，
+    // loading 遮罩一直不撤，看上去就是一片灰。
+    const scores = await getMyScores()
     for (const exam of tableData.value) {
-      try {
-        const detail = await getExam(exam.id)
-        // 随机卷在考生拿到卷子前没有题目可列，总分直接用后端给的
-        const totalScore = detail.total_score
-          || detail.questions?.reduce((sum, q) => sum + (q.score || 10), 0)
-          || 0
-        exam.total_score = totalScore
-        
-        const recordRes = await request.get(`/exam-records/user/${userId}/exam/${exam.id}`)
-        if (recordRes && recordRes.score !== undefined) {
-          examScores.value[exam.id] = recordRes.score
-        }
-      } catch {
+      const score = scores[exam.id]
+      if (score !== undefined && score !== null) {
+        examScores.value[exam.id] = score
+      }
+      // 总分列表接口已经给了，不用再拉一次考试详情
+      if (!exam.total_score) {
         exam.total_score = displayQuestionCount(exam) * 10
       }
     }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '加载失败')
   } finally {
     loading.value = false
   }
