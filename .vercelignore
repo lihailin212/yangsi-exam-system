@@ -34,6 +34,9 @@ _*.sh
 *.xlsx
 !backend/test_questions.xlsx
 
+# 含个人手机号的花名册，只在本地导入用，不进部署包
+backend/scripts/lab_roster.csv
+
 # 迁移/部署辅助脚本
 migrate_*.py
 migrate_*.ps1
