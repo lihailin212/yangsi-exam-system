@@ -35,6 +35,12 @@
         <el-table-column type="index" label="编号" width="70" :index="indexMethod" />
         <el-table-column prop="employee_id" label="工号" width="100" />
         <el-table-column prop="name" label="姓名" width="90" />
+        <el-table-column prop="phone" label="手机号码" width="130">
+          <template #default="{ row }">
+            <span v-if="row.phone">{{ row.phone }}</span>
+            <span v-else style="color:#c0c4cc">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="dept" label="科室" width="110" />
         <el-table-column prop="role" label="职位" width="120" />
         <el-table-column label="角色" width="80">
@@ -104,6 +110,9 @@
         <el-form-item label="密码" :prop="editingId ? '' : 'password'">
           <el-input v-model="form.password" type="password" :placeholder="editingId ? '不填则不修改' : '登录密码'" show-password />
         </el-form-item>
+        <el-form-item label="手机号码" prop="phone">
+          <el-input v-model="form.phone" placeholder="11 位手机号，可留空" maxlength="11" />
+        </el-form-item>
         <el-form-item label="科室">
           <el-input v-model="form.dept" placeholder="所在科室" />
         </el-form-item>
@@ -163,6 +172,7 @@ const form = reactive({
   employee_id: '',
   name: '',
   password: '',
+  phone: '',
   dept: '',
   role: '',
   is_admin: false,
@@ -175,6 +185,7 @@ const formRules = {
   employee_id: [{ required: true, message: '请输入工号' }],
   name: [{ required: true, message: '请输入姓名' }],
   password: [{ required: true, message: '请输入密码' }],
+  phone: [{ pattern: /^(|1[3-9]\d{9})$/, message: '请输入 11 位手机号' }],
 }
 
 const loadData = async () => {
@@ -196,15 +207,15 @@ const loadData = async () => {
 
 const openAdd = () => {
   editingId.value = null
-  Object.assign(form, { employee_id: '', name: '', password: '', dept: '', role: '', is_admin: false, is_active: true, organization_id: null, org_role: 'member' })
+  Object.assign(form, { employee_id: '', name: '', password: '', phone: '', dept: '', role: '', is_admin: false, is_active: true, organization_id: null, org_role: 'member' })
   dialogVisible.value = true
 }
 
 const openEdit = (row) => {
   editingId.value = row.id
   Object.assign(form, {
-    employee_id: row.employee_id, name: row.name, password: '', dept: row.dept,
-    role: row.role, is_admin: row.is_admin, is_active: row.is_active,
+    employee_id: row.employee_id, name: row.name, password: '', phone: row.phone || '',
+    dept: row.dept, role: row.role, is_admin: row.is_admin, is_active: row.is_active,
     organization_id: row.organization_id || null,
     org_role: row.org_role || 'member',
   })
@@ -216,7 +227,7 @@ const handleSave = async () => {
   saving.value = true
   try {
     if (editingId.value) {
-      const payload = { name: form.name, dept: form.dept, role: form.role, is_admin: form.is_admin, is_active: form.is_active }
+      const payload = { name: form.name, phone: form.phone, dept: form.dept, role: form.role, is_admin: form.is_admin, is_active: form.is_active }
       if (form.password) payload.password = form.password
       // 所属机构 / 机构角色只有超管能改
       if (authStore.isAdmin) {

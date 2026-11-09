@@ -53,10 +53,21 @@ def list_students(skip: int = 0, limit: int = 20, search: str = "", dept: str = 
     return {"items": [_student_row(db, u) for u in users], "total": total}
 
 
+def _check_phone_free(db, phone: str, exclude_user_id: int = 0):
+    """手机号在系统里是登录标识之一（短信登录/按手机号找账号），
+    不能两个人共用同一个号，否则登录会串号。"""
+    if not phone:
+        return
+    owner = crud.get_user_by_phone(db, phone)
+    if owner and owner.id != exclude_user_id:
+        raise HTTPException(status_code=400, detail=f"手机号已被「{owner.name}」占用")
+
+
 @router.post("", response_model=schemas.UserOut)
 def create_student(user_in: schemas.UserCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
     if crud.get_user_by_employee_id(db, user_in.employee_id):
         raise HTTPException(status_code=400, detail="工号已存在")
+    _check_phone_free(db, user_in.phone)
     if user_in.organization_id:
         org = db.query(models.Organization).filter(
             models.Organization.id == user_in.organization_id).first()
@@ -106,6 +117,9 @@ def update_student(user_id: int, user_in: schemas.UserUpdate, db: Session = Depe
 
     if user_in.org_role is not None and user_in.org_role not in ("", "member", "admin"):
         raise HTTPException(status_code=400, detail="机构角色只能是 member 或 admin")
+
+    if user_in.phone is not None:
+        _check_phone_free(db, user_in.phone, exclude_user_id=user_id)
 
     user = crud.update_user(db, user_id, user_in)
     if not user:

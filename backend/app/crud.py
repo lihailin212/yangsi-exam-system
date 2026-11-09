@@ -73,6 +73,7 @@ def create_user(db: Session, user_in: schemas.UserCreate):
         password_hash=hash_password(user_in.password),
         dept=user_in.dept,
         role=user_in.role,
+        phone=user_in.phone or "",
         is_admin=user_in.is_admin,
         is_active=user_in.is_active,
         organization_id=(user_in.organization_id or None),
@@ -94,6 +95,8 @@ def update_user(db: Session, user_id: int, user_in: schemas.UserUpdate):
         user.dept = user_in.dept
     if user_in.role is not None:
         user.role = user_in.role
+    if user_in.phone is not None:
+        user.phone = user_in.phone
     if user_in.password is not None:
         user.password_hash = hash_password(user_in.password)
     if user_in.is_admin is not None:

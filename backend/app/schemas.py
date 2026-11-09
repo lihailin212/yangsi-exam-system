@@ -1,3 +1,4 @@
+import re
 from pydantic import BaseModel, PlainSerializer, field_validator
 from typing import Optional, List, Annotated
 from datetime import datetime, timezone
@@ -37,28 +38,56 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 # ---- User ----
+# 手机号：国内 11 位。工号账号可以留空，留空就是「不用手机号登录」。
+PHONE_PATTERN = r"^1[3-9]\d{9}$"
+
+
+def normalize_phone(raw) -> str:
+    """去掉空格/横线等分隔符；非空时必须是 11 位国内手机号。"""
+    phone = re.sub(r"[\s\-()]", "", str(raw or ""))
+    if phone and not re.match(PHONE_PATTERN, phone):
+        raise ValueError("手机号格式不正确")
+    return phone
+
+
 class UserCreate(BaseModel):
     employee_id: str
     name: str
     password: str
     dept: str = ""
     role: str = ""
+    phone: str = ""
     is_admin: bool = False
     is_active: bool = True
     # 可选：直接放进某个机构（超管建号时用）
     organization_id: Optional[int] = None
     org_role: str = ""
 
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _phone(cls, v):
+        return normalize_phone(v)
+
+
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     dept: Optional[str] = None
     role: Optional[str] = None
     password: Optional[str] = None
+    phone: Optional[str] = None
     is_admin: Optional[bool] = None
     is_active: Optional[bool] = None
     # 只有超管能改：把学员拉进某个机构 / 设为机构管理员
     organization_id: Optional[int] = None
     org_role: Optional[str] = None
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _phone(cls, v):
+        # None = 本次不修改；空串 = 清空手机号
+        if v is None:
+            return None
+        return normalize_phone(v)
 
 class UserOut(BaseModel):
     id: int
