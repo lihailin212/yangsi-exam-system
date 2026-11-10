@@ -56,6 +56,11 @@ def my_entitlement(db: Session = Depends(get_db), current_user=Depends(get_curre
         "reason": ent.get("reason", ""),
         "days_left": ent.get("days_left"),
         "trial_expires_at": ent.get("trial_expires_at"),
+        # 工号账号的手机号和登录账号是两回事：
+        # 考生用工号登录，但「我的订阅」要显示本人真实手机号
+        "phone": getattr(current_user, "phone", "") or "",
+        "employee_id": getattr(current_user, "employee_id", "") or "",
+        "name": getattr(current_user, "name", "") or "",
         "organization": {
             "id": org.get("id"),
             "name": org.get("name", ""),

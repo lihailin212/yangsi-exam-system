@@ -34,6 +34,8 @@
         description="学习与考试功能已停用，成绩记录仍可查询。请联系机构管理员开通，或使用下方兑换码。" />
 
       <el-descriptions :column="2" border size="small">
+        <el-descriptions-item label="姓名">{{ profile.name || authStore.userName || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="登录账号">{{ profile.employee_id || authStore.employeeId || '—' }}</el-descriptions-item>
         <el-descriptions-item label="手机号">{{ phone }}</el-descriptions-item>
         <el-descriptions-item label="所属机构">{{ org.name || '未加入机构' }}</el-descriptions-item>
         <el-descriptions-item label="试用到期">{{ fmt(ent.trial_expires_at) || '—' }}</el-descriptions-item>
@@ -92,7 +94,9 @@ const ent = ref({ active: false, reason: '', days_left: 0 })
 const org = ref({})
 
 const contactWechat = computed(() => config.value.contact_wechat || '')
-const phone = computed(() => authStore.employeeId || '')
+// 手机号取本人资料里的真实号码；工号账号也要显示手机号，不能拿工号顶替
+const profile = ref({})
+const phone = computed(() => profile.value.phone || '未绑定手机号')
 
 const fmt = (v) => {
   if (!v) return ''
@@ -109,6 +113,7 @@ const loadAll = async () => {
       getMySubscription(), getPlans(), getBillingConfig(),
     ])
     ent.value = me
+    profile.value = { name: me.name || '', employee_id: me.employee_id || '', phone: me.phone || '' }
     org.value = me.organization || {}
     plans.value = planRes.items || []
     config.value = cfg || {}
