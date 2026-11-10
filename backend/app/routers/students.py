@@ -35,21 +35,15 @@ def list_students(skip: int = 0, limit: int = 20, search: str = "", dept: str = 
     """学员列表。
 
     机构管理员只能看到自己机构的学员；organization_id=-1 表示看「未分配池」。
+    机构过滤和排序都在 SQL 里做，翻页不会漏人也不会乱序。
     """
     if current_user.is_admin:
-        users, total = crud.get_users(db, skip=skip, limit=limit, search=search, dept=dept)
-        if organization_id == -1:
-            users = [u for u in users if not u.organization_id]
-            total = len(users)
-        elif organization_id > 0:
-            users = [u for u in users if u.organization_id == organization_id]
-            total = len(users)
+        users, total = crud.get_users(db, skip=skip, limit=limit, search=search, dept=dept,
+                                     organization_id=organization_id)
     else:
-        users = db.query(models.User).filter(
-            models.User.organization_id == current_user.organization_id
-        ).offset(skip).limit(limit).all()
-        total = db.query(models.User).filter(
-            models.User.organization_id == current_user.organization_id).count()
+        # 机构管理员：只看自己机构。require_org_admin 已保证他挂了机构。
+        users, total = crud.get_users(db, skip=skip, limit=limit, search=search, dept=dept,
+                                     organization_id=current_user.organization_id or -1)
     return {"items": [_student_row(db, u) for u in users], "total": total}
 
 

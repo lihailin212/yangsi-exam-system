@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from typing import List
 from sqlalchemy.orm import Session
-from sqlalchemy import (and_, cast, func, literal, null, or_, select,
+from sqlalchemy import (and_, cast, case, func, literal, null, or_, select,
                       union_all)
 from sqlalchemy import Integer, Text
 from sqlalchemy.exc import IntegrityError
@@ -56,7 +56,31 @@ def get_user_by_identifier(db: Session, identifier: str):
     return None
 
 
-def get_users(db: Session, skip=0, limit=100, search="", dept=""):
+def employee_id_order():
+    """按工号升序的 ORDER BY 表达式（学员列表、机构成员列表共用）。
+
+    工号列是字符串，但实际存的都是数字（5303、6332…）。对纯数字串来说，
+    "先按位数、再按字典序"和按数值排是一回事：位数少的数一定更小，
+    位数相同再比字典序就等于比大小。length() 在 PostgreSQL 和 SQLite 上都有，
+    不用写两套 SQL。
+
+    非数字工号（admin 这类系统账号）和空工号排在最后，别混在学员中间。
+    """
+    eid = models.User.employee_id
+    return (
+        case((eid.is_(None), 1), else_=0),               # 空值最后
+        case((func.trim(eid) == "", 1), else_=0),         # 空串最后
+        func.coalesce(func.length(func.trim(eid)), 9999),  # 位数少的在前
+        func.trim(eid),
+    )
+
+
+def get_users(db: Session, skip=0, limit=100, search="", dept="", organization_id=0):
+    """学员列表，默认按工号升序。
+
+    organization_id：0 = 不限；-1 = 未分配池（没有机构的）；>0 = 指定机构。
+    机构过滤放在 SQL 里做，分页才不会漏人（以前是先分页再过滤，翻页会丢人）。
+    """
     q = db.query(models.User)
     if search:
         q = q.filter(
@@ -64,6 +88,11 @@ def get_users(db: Session, skip=0, limit=100, search="", dept=""):
         )
     if dept:
         q = q.filter(models.User.dept == dept)
+    if organization_id == -1:
+        q = q.filter(models.User.organization_id.is_(None))
+    elif organization_id > 0:
+        q = q.filter(models.User.organization_id == organization_id)
+    q = q.order_by(*employee_id_order())
     return q.offset(skip).limit(limit).all(), q.count()
 
 def create_user(db: Session, user_in: schemas.UserCreate):

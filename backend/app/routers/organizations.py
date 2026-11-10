@@ -199,7 +199,7 @@ def list_members(org_id: int, db: Session = Depends(get_db),
     _ensure_access(current_user, org_id)
     rows = db.query(models.User).filter(
         models.User.organization_id == org_id
-    ).order_by(models.User.id).all()
+    ).order_by(*crud.employee_id_order()).all()
     return {
         "items": [schemas.OrgMemberOut.model_validate(u).model_dump() for u in rows],
         "seat_used": billing_lib.count_seats(db, org_id),
