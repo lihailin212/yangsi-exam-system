@@ -137,11 +137,15 @@
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="profile">
+                <el-dropdown-item command="password">
+                  <el-icon><Lock /></el-icon>
+                  修改密码
+                </el-dropdown-item>
+                <el-dropdown-item v-if="authStore.isAdmin" command="profile">
                   <el-icon><User /></el-icon>
                   个人中心
                 </el-dropdown-item>
-                <el-dropdown-item command="settings">
+                <el-dropdown-item v-if="authStore.isAdmin" command="settings">
                   <el-icon><Setting /></el-icon>
                   系统设置
                 </el-dropdown-item>
@@ -197,6 +201,7 @@ import {
   Expand,
   CaretBottom,
   SwitchButton,
+  Lock,
   Document,
   TrendCharts,
   Collection,
@@ -234,7 +239,7 @@ const userRole = computed(() => authStore.isAdmin ? '系统管理员' : '普通�
 
 const currentPageTitle = computed(() => {
   const item = menuItems.value.find(m => m.path === activeMenu.value)
-  return item?.title || '首页'
+  return item?.title || route.meta.title || '首页'
 })
 
 const isMobile = ref(false)
@@ -486,6 +491,9 @@ const handleCommand = (command) => {
   if (command === 'logout') {
     authStore.logout()
     router.push('/login')
+  } else if (command === 'password') {
+    // 自己和考生都从这里改自己的密码
+    router.push('/password')
   } else if (command === 'profile') {
     router.push('/settings')
   }

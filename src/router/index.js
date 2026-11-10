@@ -13,6 +13,7 @@ const routes = [
       { path: 'arena', component: () => import('@/views/ArenaManage.vue'), meta: { title: '专业擂台赛', requiresAdmin: true } },
       { path: 'my-exams', component: () => import('@/views/StudentExams.vue'), meta: { title: '我的考试' } },
       { path: 'wrong-questions', component: () => import('@/views/WrongQuestions.vue'), meta: { title: '我的错题本' } },
+      { path: 'password', component: () => import('@/views/Password.vue'), meta: { title: '修改密码' } },
       { path: 'self-study', component: () => import('@/views/SelfStudy.vue'), meta: { title: '考生自学', requiresEntitlement: true } },
       { path: 'statistics', component: () => import('@/views/Statistics.vue'), meta: { title: '数据统计', requiresAdmin: true } },
       { path: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '系统设置', requiresAdmin: true } },
