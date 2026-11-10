@@ -1,12 +1,23 @@
 <template>
   <div class="study-page">
     <div class="page-header">
-      <h2>考生自学</h2>
-      <p class="subtitle">选择题目进行自主学习，点击题干下方区域查看答案和解析</p>
+      <div class="header-main">
+        <h2>考生自学</h2>
+        <p class="subtitle">随机练习或按题型/题号选题，做完自动判分，答错的题进入「我的错题本」</p>
+      </div>
+      <el-button
+        type="primary"
+        size="large"
+        :loading="practiceLoading"
+        @click="startQuickRandom"
+      >
+        <el-icon><Refresh /></el-icon>
+        随机学习
+      </el-button>
     </div>
 
     <!-- 学习模式选择 -->
-    <el-card v-if="!studying" class="mode-card">
+    <el-card v-if="!studying && !practicing" class="mode-card">
       <template #header>
         <span>题目选择</span>
       </template>
@@ -45,6 +56,64 @@
           查询
         </el-button>
       </div>
+
+      <!-- 自主练习（做题模式）：随机学习 / 按题型 / 按题号范围 / 按题目编号 -->
+      <div class="practice-panel">
+        <div class="practice-panel-head">
+          <span class="practice-panel-title">自主练习</span>
+          <span class="range-hint">做题 → 提交判分 → 答错的题自动进入「我的错题本」</span>
+        </div>
+
+        <el-radio-group v-model="practiceMode" class="practice-mode-group">
+          <el-radio-button value="random">随机学习</el-radio-button>
+          <el-radio-button value="type">按题型</el-radio-button>
+          <el-radio-button value="range">按题号范围</el-radio-button>
+          <el-radio-button value="number">按题目编号</el-radio-button>
+        </el-radio-group>
+
+        <div class="practice-params">
+          <template v-if="practiceMode === 'random'">
+            <span class="range-text">随机抽</span>
+            <el-input v-model="practiceCount" type="number" min="1" max="200" style="width: 90px" />
+            <span class="range-text">道题</span>
+          </template>
+
+          <template v-else-if="practiceMode === 'type'">
+            <el-select v-model="practiceType" placeholder="选择题型" style="width: 140px">
+              <el-option label="单选题" value="single" />
+              <el-option label="多选题" value="multiple" />
+              <el-option label="判断题" value="judgment" />
+              <el-option label="填空题" value="fill" />
+            </el-select>
+            <span class="range-text">抽</span>
+            <el-input v-model="practiceCount" type="number" min="0" max="200" style="width: 90px" />
+            <span class="range-text">道题（填 0 表示该题型全要）</span>
+          </template>
+
+          <template v-else-if="practiceMode === 'range'">
+            <span class="range-text">第</span>
+            <el-input v-model="practiceStart" type="number" min="1" :max="total || 1" style="width: 90px" placeholder="起始题号" />
+            <span class="range-text">题 到 第</span>
+            <el-input v-model="practiceEnd" type="number" min="1" :max="total || 1" style="width: 90px" placeholder="结束题号" />
+            <span class="range-text">题</span>
+          </template>
+
+          <template v-else>
+            <el-input v-model="practiceNumbers" placeholder="题目编号，如 1,5,8-12" clearable style="width: 240px" />
+            <span class="range-hint">编号是题号（当前筛选列表里的第几题）</span>
+          </template>
+
+          <el-button
+            type="primary"
+            :loading="practiceLoading"
+            @click="startPractice()"
+          >
+            {{ practiceMode === 'random' ? '随机学习' : '开始练习' }}
+          </el-button>
+        </div>
+      </div>
+
+      <el-divider content-position="left">浏览题目（点题干下方区域看答案和解析）</el-divider>
 
       <!-- 按题号范围选题 -->
       <div class="range-row">
@@ -125,6 +194,115 @@
         >
           开始学习 ({{ selectedQuestions.length }})
         </el-button>
+      </div>
+    </el-card>
+
+    <!-- 自主练习（做题模式） -->
+    <el-card v-else-if="practicing" class="practice-card">
+      <template #header>
+        <div class="study-header">
+          <span>自主练习：第 {{ practiceIndex + 1 }} / {{ practiceItems.length }} 题</span>
+          <span class="practice-score">
+            答对 {{ practiceCorrectCount }} 题 · 答错 {{ practiceWrongCount }} 题
+          </span>
+        </div>
+      </template>
+
+      <div v-if="currentPracticeQuestion" class="question-card">
+        <div class="question-type">
+          <el-tag :type="getTypeTag(currentPracticeQuestion.type)">
+            {{ getTypeName(currentPracticeQuestion.type) }}
+          </el-tag>
+          <el-tag v-if="currentPracticeQuestion.seq" size="small" type="info">
+            第 {{ currentPracticeQuestion.seq }} 题
+          </el-tag>
+          <el-tag v-if="currentPracticeQuestion.category" size="small" type="info">
+            {{ currentPracticeQuestion.category }}
+          </el-tag>
+        </div>
+
+        <!-- 题干 -->
+        <div class="question-stem" v-html="currentPracticeQuestion.content" @click="handleStemImageClick"></div>
+
+        <!-- 填空题 -->
+        <div v-if="currentPracticeQuestion.type === 'fill'" class="fill-area">
+          <div class="fill-label">我的答案</div>
+          <el-input
+            v-model="practiceFillAnswer"
+            type="textarea"
+            :rows="2"
+            maxlength="100"
+            :disabled="practiceSubmitted"
+            placeholder="请填写答案"
+          />
+        </div>
+
+        <!-- 选择题 -->
+        <div v-if="practiceHasOptions" class="options-area">
+          <div
+            v-for="opt in practiceOptionList"
+            :key="opt.key"
+            class="option-item"
+            :class="{
+              chosen: practiceChoiceKeys.includes(opt.key),
+              correct: practiceSubmitted && practiceIsCorrectOption(opt.key),
+              wrong: practiceSubmitted && practiceChoiceKeys.includes(opt.key) && !practiceIsCorrectOption(opt.key)
+            }"
+            @click="togglePracticeChoice(opt.key)"
+          >
+            <span class="option-key">{{ opt.key }}</span>
+            <span class="option-val" v-html="opt.label"></span>
+            <el-icon v-if="practiceChoiceKeys.includes(opt.key)" class="option-mark"><CircleCheckFilled /></el-icon>
+          </div>
+          <div v-if="!practiceSubmitted" class="choice-tip">点击选项作答，然后点下方「提交本题」</div>
+        </div>
+
+        <!-- 判分结果 -->
+        <div v-if="practiceSubmitted && currentPracticeResult" class="answer-section">
+          <div
+            class="answer-box"
+            :class="{ 'answer-correct': currentPracticeResult.correct, 'answer-wrong': !currentPracticeResult.correct }"
+          >
+            <div class="answer-label">{{ currentPracticeResult.correct ? '回答正确' : '回答错误' }}</div>
+            <div class="answer-value">正确答案：{{ currentPracticeResult.correct_answer }}</div>
+            <div v-if="!currentPracticeResult.correct" class="answer-value">
+              我的答案：{{ practiceMyAnswerText || '（未作答）' }}
+            </div>
+            <div v-if="!currentPracticeResult.correct" class="answer-label">本题已加入「我的错题本」</div>
+          </div>
+
+          <div v-if="currentPracticeResult.analysis" class="analysis-box">
+            <div class="analysis-label">答案解析</div>
+            <div class="analysis-value" v-html="currentPracticeResult.analysis"></div>
+          </div>
+        </div>
+
+        <!-- 底部操作栏 -->
+        <div class="study-nav">
+          <el-button :disabled="practiceIndex === 0" @click="prevPracticeQuestion">
+            上一题
+          </el-button>
+          <el-button
+            v-if="!practiceSubmitted"
+            type="primary"
+            :loading="practiceSubmitting"
+            :disabled="!practiceHasAnswer"
+            @click="submitPracticeAnswer"
+          >
+            提交本题
+          </el-button>
+          <el-button v-else type="primary" @click="nextPracticeQuestion">
+            {{ practiceIndex === practiceItems.length - 1 ? '交卷' : '下一题' }}
+            <el-icon><ArrowRight /></el-icon>
+          </el-button>
+          <el-button type="danger" plain @click="exitPractice">
+            结束练习
+          </el-button>
+        </div>
+      </div>
+
+      <div class="progress-bar">
+        <el-progress :percentage="practiceProgress" :stroke-width="8" :show-text="false" />
       </div>
     </el-card>
 
@@ -262,6 +440,26 @@
     <!-- 图片预览 -->
     <ImagePreview v-model="previewVisible" :src="previewSrc" title="题目图片" />
 
+    <!-- 练习小结 -->
+    <!-- 学习完成对话框 -->
+    <el-dialog v-model="showPracticeSummary" title="练习完成" width="420px" center>
+      <div class="complete-content">
+        <div class="practice-summary">
+          <div class="summary-item correct">答对 {{ practiceSummary.correct }} 题</div>
+          <div class="summary-item wrong">答错 {{ practiceSummary.wrong }} 题</div>
+          <div class="summary-item none">未作答 {{ practiceSummary.unanswered }} 题</div>
+        </div>
+        <p class="summary-tip">
+          答错的题目已加入「我的错题本」，可以随时回看并重新练习。
+        </p>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="goWrongBook">查看错题本</el-button>
+        <el-button @click="restartPractice">再练一组</el-button>
+        <el-button @click="exitPractice">返回选题</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 学习完成对话框 -->
     <el-dialog v-model="showCompleteDialog" title="学习完成" width="400px" center>
       <div class="complete-content">
@@ -279,9 +477,15 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, QuestionFilled, ArrowRight, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
+import { Search, QuestionFilled, ArrowRight, CircleCheckFilled, CircleCloseFilled, Refresh } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 import request from '@/api/index'
 import { getCategories } from '@/api/questions'
+import {
+  generatePractice,
+  submitPracticeAnswer as submitPracticeAnswerApi,
+  finishPractice as finishPracticeApi,
+} from '@/api/selfStudy'
 import ImagePreview from '@/components/ImagePreview.vue'
 
 const loading = ref(false)
@@ -939,6 +1143,262 @@ const progressPercentage = computed(() => {
   return Math.round(((currentIndex.value + 1) / studyIds.value.length) * 100)
 })
 
+// ===== 自主练习（做题模式）=====
+const router = useRouter()
+
+const practicing = ref(false)
+const practiceLoading = ref(false)
+const practiceSubmitting = ref(false)
+// 选题方式：random 随机学习 / type 按题型 / range 按题号范围 / number 按题目编号
+const practiceMode = ref('random')
+const practiceType = ref('')
+const practiceCount = ref(10)
+const practiceStart = ref('')
+const practiceEnd = ref('')
+const practiceNumbers = ref('')
+const practiceItems = ref([])
+const practiceIndex = ref(0)
+// 考生作答：{题目id: 作答内容}（多选题存逗号分隔的选项键）
+const practiceAnswers = ref({})
+// 判分结果：{题目id: 后端返回的对错/正确答案/解析}
+const practiceResults = ref({})
+const showPracticeSummary = ref(false)
+const practiceSummary = ref({ total: 0, answered: 0, correct: 0, wrong: 0, unanswered: 0 })
+
+const currentPracticeQuestion = computed(() => practiceItems.value[practiceIndex.value] || null)
+const currentPracticeResult = computed(() => {
+  const id = currentPracticeQuestion.value?.id
+  return id ? practiceResults.value[id] || null : null
+})
+// 本题是否已经提交判过分
+const practiceSubmitted = computed(() => !!currentPracticeResult.value)
+
+// 当前题的选项（判断题在题库里选项是空的，这里补上「正确/错误」）
+const practiceOptionList = computed(() => {
+  const q = currentPracticeQuestion.value
+  if (!q) return []
+  let obj = {}
+  try {
+    const parsed = JSON.parse(q.options || '{}')
+    obj = parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (e) {
+    obj = {}
+  }
+  const entries = Object.entries(obj)
+  if (!entries.length) return []
+  const allBlank = entries.every(([, v]) => !String(v ?? '').trim())
+  if (q.type === 'judgment' && allBlank) {
+    return [
+      { key: 'A', label: '正确' },
+      { key: 'B', label: '错误' },
+    ]
+  }
+  return entries.map(([key, val]) => ({ key, label: val }))
+})
+const practiceHasOptions = computed(() => practiceOptionList.value.length > 0)
+
+// 当前题选中的选项
+const practiceChoiceKeys = computed(() => {
+  const id = currentPracticeQuestion.value?.id
+  if (!id) return []
+  const raw = practiceAnswers.value[id]
+  if (!raw) return []
+  return String(raw).split(',').map(s => s.trim()).filter(Boolean)
+})
+
+// 填空题作答
+const practiceFillAnswer = computed({
+  get: () => {
+    const id = currentPracticeQuestion.value?.id
+    return id ? practiceAnswers.value[id] || '' : ''
+  },
+  set: (v) => {
+    const id = currentPracticeQuestion.value?.id
+    if (id) practiceAnswers.value = { ...practiceAnswers.value, [id]: v }
+  },
+})
+
+// 提交给后端的作答内容
+const practiceAnswerValue = computed(() => {
+  const q = currentPracticeQuestion.value
+  if (!q) return ''
+  if (q.type === 'multiple') return practiceChoiceKeys.value.join(',')
+  if (q.type === 'fill') return practiceFillAnswer.value
+  return practiceChoiceKeys.value[0] || ''
+})
+
+// 本题是否已作答（决定「提交本题」能不能点）
+const practiceHasAnswer = computed(() => {
+  const q = currentPracticeQuestion.value
+  if (!q) return false
+  if (q.type === 'fill') return !!String(practiceFillAnswer.value).trim()
+  return practiceChoiceKeys.value.length > 0
+})
+
+// 我的作答文字（答错时回显）
+const practiceMyAnswerText = computed(() => {
+  const q = currentPracticeQuestion.value
+  if (!q) return ''
+  if (q.type === 'fill') return practiceFillAnswer.value
+  return practiceChoiceKeys.value.join('、')
+})
+
+// 正确答案的选项键（判分后高亮正确项）
+const practiceCorrectKeys = computed(() => {
+  const res = currentPracticeResult.value
+  return Array.isArray(res?.correct_keys) ? res.correct_keys.map(String) : []
+})
+const practiceIsCorrectOption = (key) => practiceCorrectKeys.value.includes(String(key))
+
+const practiceProgress = computed(() => {
+  if (!practiceItems.value.length) return 0
+  return Math.round(((practiceIndex.value + 1) / practiceItems.value.length) * 100)
+})
+const practiceCorrectCount = computed(
+  () => Object.values(practiceResults.value).filter(r => r.correct).length
+)
+const practiceWrongCount = computed(
+  () => Object.values(practiceResults.value).filter(r => !r.correct).length
+)
+
+// 点选选项：单选/判断题单选，多选题可多选；已提交的题不能再改
+const togglePracticeChoice = (key) => {
+  const q = currentPracticeQuestion.value
+  if (!q || practiceSubmitted.value) return
+  const id = q.id
+  const keyStr = String(key)
+  const cur = practiceChoiceKeys.value
+  if (q.type === 'multiple') {
+    const next = cur.includes(keyStr) ? cur.filter(k => k !== keyStr) : [...cur, keyStr]
+    practiceAnswers.value = { ...practiceAnswers.value, [id]: next.join(',') }
+  } else {
+    practiceAnswers.value = { ...practiceAnswers.value, [id]: keyStr }
+  }
+}
+
+// 生成一组练习题
+const startPractice = async (mode) => {
+  const useMode = mode || practiceMode.value
+  const qType = useMode === 'type' ? practiceType.value : filterType.value
+  if (useMode === 'type' && !qType) {
+    ElMessage.warning('请选择题型')
+    return
+  }
+  practiceLoading.value = true
+  // 开始练习时先退出「看答案」的学习模式：两个模式共用这一页，不能同时开
+  studying.value = false
+  try {
+    const res = await generatePractice({
+      mode: useMode,
+      count: Number(practiceCount.value) || 0,
+      q_type: qType,
+      category: filterCategory.value,
+      search: searchKeyword.value,
+      start: Number(practiceStart.value) || 0,
+      end: Number(practiceEnd.value) || 0,
+      numbers: practiceNumbers.value,
+    })
+    if (!res || !Array.isArray(res.items) || !res.items.length) {
+      ElMessage.warning('没有符合条件的题目')
+      return
+    }
+    practiceMode.value = useMode
+    practiceItems.value = res.items
+    practiceAnswers.value = {}
+    practiceResults.value = {}
+    practiceIndex.value = 0
+    practicing.value = true
+    ElMessage.success(`已生成 ${res.items.length} 道练习题`)
+  } catch (e) {
+    console.error('生成练习题失败', e)
+    ElMessage.error('生成练习题失败，请稍后重试')
+  } finally {
+    practiceLoading.value = false
+  }
+}
+
+// 页头的「随机学习」：一键随机抽题
+const startQuickRandom = () => startPractice('random')
+
+// 提交本题：后端判分，答错的自动进错题本
+const submitPracticeAnswer = async () => {
+  const q = currentPracticeQuestion.value
+  if (!q || practiceSubmitting.value) return
+  practiceSubmitting.value = true
+  try {
+    const res = await submitPracticeAnswerApi({
+      question_id: q.id,
+      answer: practiceAnswerValue.value,
+    })
+    practiceResults.value = { ...practiceResults.value, [q.id]: res }
+  } catch (e) {
+    console.error('判分失败', e)
+    ElMessage.error('判分失败，请稍后重试')
+  } finally {
+    practiceSubmitting.value = false
+  }
+}
+
+const prevPracticeQuestion = () => {
+  if (practiceIndex.value > 0) {
+    practiceIndex.value--
+  }
+}
+
+const nextPracticeQuestion = async () => {
+  if (practiceIndex.value < practiceItems.value.length - 1) {
+    practiceIndex.value++
+  } else {
+    await finishPractice()
+  }
+}
+
+// 交卷：没做的题按做错处理，记进错题本
+const finishPractice = async () => {
+  const unanswered = practiceItems.value
+    .filter(item => !practiceResults.value[item.id])
+    .map(item => item.id)
+  try {
+    if (unanswered.length) {
+      await finishPracticeApi({ unanswered_ids: unanswered })
+    }
+  } catch (e) {
+    console.error('交卷失败', e)
+  }
+  const answered = Object.keys(practiceResults.value).length
+  const correct = practiceCorrectCount.value
+  practiceSummary.value = {
+    total: practiceItems.value.length,
+    answered,
+    correct,
+    wrong: answered - correct,
+    unanswered: unanswered.length,
+  }
+  showPracticeSummary.value = true
+}
+
+// 退出练习
+const exitPractice = () => {
+  practicing.value = false
+  showPracticeSummary.value = false
+  practiceItems.value = []
+  practiceAnswers.value = {}
+  practiceResults.value = {}
+  practiceIndex.value = 0
+}
+
+// 再练一组：同样的选题方式重新抽题
+const restartPractice = async () => {
+  showPracticeSummary.value = false
+  await startPractice(practiceMode.value)
+}
+
+// 去「我的错题本」
+const goWrongBook = () => {
+  showPracticeSummary.value = false
+  router.push('/wrong-questions')
+}
+
 onMounted(() => {
   loadQuestions()
   loadAllIds()
@@ -1476,5 +1936,95 @@ onUnmounted(() => {
   font-size: 16px;
   color: #606266;
   margin: 0;
+}
+/* ===== 自主练习（做题模式）===== */
+.header-main {
+  flex: 1;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.practice-panel {
+  background: #f7f9fc;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+
+.practice-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.practice-panel-title {
+  font-weight: 600;
+  color: #303133;
+  font-size: 15px;
+}
+
+.practice-mode-group {
+  margin-bottom: 12px;
+}
+
+.practice-params {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: #606266;
+}
+
+.practice-card .study-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.practice-score {
+  color: #606266;
+  font-size: 13px;
+}
+
+.answer-correct {
+  border-left: 4px solid #67c23a;
+}
+
+.answer-wrong {
+  border-left: 4px solid #f56c6c;
+}
+
+.practice-summary {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin: 10px 0 14px;
+  font-size: 15px;
+}
+
+.summary-item.correct {
+  color: #67c23a;
+}
+
+.summary-item.wrong {
+  color: #f56c6c;
+}
+
+.summary-item.none {
+  color: #909399;
+}
+
+.summary-tip {
+  margin: 0;
+  color: #909399;
+  font-size: 13px;
+  text-align: center;
 }
 </style>

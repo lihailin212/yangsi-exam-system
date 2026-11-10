@@ -13,7 +13,7 @@ from .config import APP_VERSION, ADMIN_INITIAL_PASSWORD
 from .auth import verify_password
 from .routers import (auth, exams, questions, students, statistics, upload,
                       settings, distributions, arenas, arenas_ws, billing, organizations,
-                      images, past_papers, wrong_questions)
+                      images, past_papers, wrong_questions, self_study)
 
 class _Phase:
     """打印启动各阶段耗时。
@@ -315,6 +315,7 @@ app.include_router(organizations.router)
 app.include_router(images.router)
 app.include_router(past_papers.router)
 app.include_router(wrong_questions.router)
+app.include_router(self_study.router)
 
 @app.get("/uploads/{filename:path}")
 def serve_upload(filename: str):
