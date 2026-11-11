@@ -4,7 +4,33 @@
       <h2>我的考试</h2>
     </div>
 
-    <el-card v-loading="loading">
+    <!-- 手机端：表格列太多，横向挤在一起看不清（考试名称被压成两行、
+         操作按钮盖住表格）。改成卡片列表，每场考试一张卡，信息竖排。 -->
+    <div v-loading="loading" v-if="isMobile" class="exam-cards">
+      <el-card v-for="row in tableData" :key="row.id" shadow="never" class="exam-card">
+        <div class="exam-card-title">{{ row.title }}</div>
+        <div class="exam-card-meta">
+          <span>{{ row.duration }} 分钟</span>
+          <span>{{ displayQuestionCount(row) }} 题</span>
+          <span>满分 {{ row.total_score }} 分</span>
+          <span>及格 {{ row.pass_score }} 分</span>
+        </div>
+        <div class="exam-card-foot">
+          <el-tag :type="getStatusType(row)" size="small">{{ getStatus(row) }}</el-tag>
+          <el-button
+            v-if="canStart(row)"
+            type="primary"
+            size="small"
+            @click="startExam(row)"
+          >
+            开始考试
+          </el-button>
+        </div>
+      </el-card>
+      <el-empty v-if="!loading && tableData.length === 0" description="暂无可参加的考试" />
+    </div>
+
+    <el-card v-loading="loading" v-else>
       <el-table :data="tableData" style="width:100%">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="title" label="考试名称" min-width="160" />
@@ -62,7 +88,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getExams } from '@/api/exams'
 import { getMyScores } from '@/api/examScores'
@@ -70,6 +96,9 @@ import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const loading = ref(false)
+// 手机端用卡片列表代替表格（表格列多，横向放不下）
+const isMobile = ref(false)
+const updateMobile = () => { isMobile.value = window.innerWidth <= 768 }
 const tableData = ref([])
 const examScores = ref({})
 const confirmVisible = ref(false)
@@ -143,7 +172,12 @@ const confirmStart = () => {
   router.push({ path: `/exam-take/${currentExam.value.id}` })
 }
 
-onMounted(loadData)
+onMounted(() => {
+  updateMobile()
+  window.addEventListener('resize', updateMobile)
+  loadData()
+})
+onUnmounted(() => window.removeEventListener('resize', updateMobile))
 </script>
 
 <style scoped>
@@ -155,4 +189,13 @@ onMounted(loadData)
   margin-bottom: 16px;
 }
 .page-header h2 { font-size: 18px; font-weight: 500; }
+
+/* 手机端卡片列表 */
+.exam-cards { display: flex; flex-direction: column; gap: 10px; }
+.exam-card-title { font-size: 15px; font-weight: 600; line-height: 1.5; margin-bottom: 8px; }
+.exam-card-meta {
+  display: flex; flex-wrap: wrap; gap: 6px 12px;
+  font-size: 12px; color: var(--neutral-500, #909399); margin-bottom: 10px;
+}
+.exam-card-foot { display: flex; align-items: center; justify-content: space-between; }
 </style>

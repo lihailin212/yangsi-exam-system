@@ -70,9 +70,12 @@ def get_exam(exam_id: int, db: Session = Depends(get_db), current_user=Depends(r
         answered_count > 0 and (retake_exhausted or exam_finished)
     )
     random_mode = bool(getattr(exam, "random_mode", False))
-    if random_mode and not current_user.is_admin:
-        # 随机卷：考生只看得到自己抽到的那份卷子，
-        # 没抽过（还没开始考试）时先不给题，避免整池题目漏出去。
+    if random_mode:
+        # 随机卷：看到的永远是自己抽到的那份卷子（管理员也一样）。
+        # 管理员以前走的是"把整池候选题全给出去"的分支，页面上就显示
+        # "共 6333 题"——但这份卷子实际只按规则抽 100 道，
+        # 考生（和管理员自己）要答的是那 100 道。
+        # 没抽过（还没开始考试）时先按规则现抽一份，不给整池题目。
         attempt_no = crud.current_attempt_no(db, exam_id, current_user.id)
         try:
             exam_questions = crud.get_paper_questions(

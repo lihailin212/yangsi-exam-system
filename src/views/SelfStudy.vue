@@ -2027,4 +2027,78 @@ onUnmounted(() => {
   font-size: 13px;
   text-align: center;
 }
+
+/* ===== 手机端 =====
+   页头并排会把说明文字挤成一条细缝，筛选行的固定宽度下拉框
+   （150/200/200px）加起来超过屏宽，选项按钮组也会折行错位。
+   手机上全部改成竖排 + 满宽。 */
+@media (max-width: 768px) {
+  .study-page { padding: 12px; }
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .page-header .el-button { width: 100%; margin-left: 0; }
+
+  .subtitle { font-size: 13px; }
+
+  .filter-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  /* 下拉框和搜索框改成满宽：原来的固定宽度在手机上会超出卡片 */
+  .filter-row .el-select,
+  .filter-row .el-input { width: 100% !important; }
+  .filter-row .el-button { width: 100%; margin-left: 0; }
+
+  .practice-panel { padding: 12px; }
+  .practice-panel-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+
+  /* 四个选项按钮在手机上折行时会被 el-radio-button 的边框切掉，
+     改成整组换行、按钮之间留缝 */
+  .practice-mode-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .practice-mode-group :deep(.el-radio-button) { margin-right: 0; }
+  .practice-mode-group :deep(.el-radio-button__inner) {
+    border-radius: 4px;
+    border-left: 1px solid var(--el-border-color);
+    width: 100%;
+  }
+
+  .practice-params {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .practice-params .el-select,
+  .practice-params .el-input { width: 100% !important; }
+  .practice-params .el-button { width: 100%; margin-left: 0; }
+  .practice-params .range-text,
+  .practice-params .range-hint { text-align: left; }
+
+  .range-row { flex-wrap: wrap; gap: 8px; }
+  .range-row .el-input { width: 100% !important; }
+  .range-row .el-button { flex: 1; margin-left: 0; }
+
+  .stats-row { flex-wrap: wrap; gap: 8px; }
+
+  .action-row { flex-wrap: wrap; }
+  .action-row .el-button { flex: 1 1 45%; margin-left: 0; }
+
+  .question-list { max-height: 320px; padding: 6px; }
+  .question-item { padding: 8px; }
+}
 </style>

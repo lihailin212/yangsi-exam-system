@@ -52,7 +52,47 @@
 
     <!-- 列表 -->
     <el-card shadow="never">
-      <el-table :data="items" v-loading="loading" style="width:100%" empty-text="还没有错题记录">
+      <!-- 手机端：表格列太多，横向溢出后题干被裁掉。改成卡片列表，信息竖排。 -->
+      <div v-if="isMobile" v-loading="loading" class="wq-cards">
+        <div v-for="row in items" :key="row.id" class="wq-card">
+          <div class="wq-card-head">
+            <el-tag size="small" :type="typeTag[row.type]?.type">{{ typeTag[row.type]?.label || row.type }}</el-tag>
+            <el-tag size="small" :type="row.status === 'mastered' ? 'success' : 'warning'">
+              {{ row.status === 'mastered' ? '已掌握' : '待复习' }}
+            </el-tag>
+            <el-tag size="small" type="danger">错 {{ row.wrong_count }} 次</el-tag>
+          </div>
+          <div class="wq-card-content" v-html="row.content"></div>
+          <div class="wq-card-meta">
+            <span v-if="row.category">{{ row.category }}</span>
+            <span v-if="row.exam_title">{{ row.exam_title }}</span>
+            <span>{{ formatTime(row.last_wrong_at) }}</span>
+          </div>
+          <div class="wq-card-foot">
+            <el-button link type="primary" @click="toggleExpand(row.id)">
+              {{ expandedId === row.id ? '收起解析' : '查看解析' }}
+            </el-button>
+            <el-button link type="danger" @click="removeRow(row)">删除</el-button>
+          </div>
+          <div v-show="expandedId === row.id" class="wq-card-detail">
+            <div class="detail-line">
+              <span class="detail-label">正确答案：</span>
+              <span class="detail-answer">{{ row.answer || '（无）' }}</span>
+            </div>
+            <div class="detail-line">
+              <span class="detail-label">我的错答：</span>
+              <span class="detail-answer wrong">{{ row.wrong_answer || '（未作答）' }}</span>
+            </div>
+            <div v-if="row.analysis" class="detail-line">
+              <span class="detail-label">解析：</span>
+              <span>{{ row.analysis }}</span>
+            </div>
+          </div>
+        </div>
+        <el-empty v-if="!loading && items.length === 0" description="还没有错题记录" />
+      </div>
+
+      <el-table v-else :data="items" v-loading="loading" style="width:100%" empty-text="还没有错题记录">
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="detail-box">
@@ -154,7 +194,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -163,6 +203,12 @@ import {
 } from '@/api/wrongQuestions'
 
 const router = useRouter()
+// 手机端用卡片列表代替表格（表格列多，横向放不下会被裁切）
+const isMobile = ref(false)
+const updateMobile = () => { isMobile.value = window.innerWidth <= 768 }
+// 手机端卡片展开查看解析的当前行 id
+const expandedId = ref(null)
+const toggleExpand = (id) => { expandedId.value = expandedId.value === id ? null : id }
 const loading = ref(false)
 const exporting = ref(false)
 const generating = ref(false)
@@ -263,7 +309,12 @@ const handleExport = async () => {
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  updateMobile()
+  window.addEventListener('resize', updateMobile)
+  loadData()
+})
+onUnmounted(() => window.removeEventListener('resize', updateMobile))
 </script>
 
 <style scoped>
@@ -302,4 +353,61 @@ onMounted(loadData)
 .detail-answer.wrong { color: #F56C6C; }
 
 .pager { display: flex; justify-content: flex-end; margin-top: 14px; }
+
+/* 手机端错题卡片 */
+.wq-cards { display: flex; flex-direction: column; gap: 10px; }
+.wq-card {
+  border: 1px solid var(--neutral-200, #e4e7ed);
+  border-radius: 8px; padding: 10px 12px; background: #fff;
+}
+.wq-card-head { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.wq-card-content { font-size: 14px; line-height: 1.6; margin-bottom: 8px; word-break: break-word; }
+.wq-card-content :deep(img) { max-width: 100%; max-height: 120px; }
+.wq-card-meta {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 12px; color: var(--neutral-500, #909399); margin-bottom: 8px;
+}
+.wq-card-foot { display: flex; gap: 4px; }
+.wq-card-foot .el-button { margin-left: 0; padding: 0; }
+.wq-card-detail {
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--neutral-200, #e4e7ed);
+}
+
+/* ===== 手机端 =====
+   页头是 flex + space-between，标题块被按钮挤到只剩一个字宽，
+   "我的错题本" 就被压成竖排一列；副标题同理。
+   手机上改成上下堆叠，按钮各占一行。 */
+@media (max-width: 768px) {
+  .wrong-page { padding: 12px; }
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .page-header h2 { font-size: 17px; }
+  .page-sub { font-size: 12px; }
+
+  .header-actions { flex-direction: column; gap: 8px; }
+  .header-actions .el-button { width: 100%; margin-left: 0; }
+
+  .stat-row { gap: 8px; }
+  .stat-card { padding: 10px 8px; text-align: center; }
+  .stat-value { font-size: 20px; }
+  .stat-label { font-size: 11px; }
+
+  .filter-row { flex-direction: column; align-items: stretch; }
+  .filter-row .el-radio-group { flex-wrap: wrap; }
+  .filter-row .el-select,
+  .filter-row .el-input { width: 100% !important; }
+  .filter-row .el-button { width: 100%; margin-left: 0; }
+
+  .detail-box { padding: 4px 4px 10px; }
+
+  .pager { justify-content: center; }
+  .pager :deep(.el-pagination__sizes),
+  .pager :deep(.el-pagination__jump) { display: none; }
+}
 </style>

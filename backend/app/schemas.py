@@ -291,7 +291,9 @@ class QuestionUpdate(QuestionCreate):
 
 class QuestionOut(QuestionCreate):
     id: int
-    created_at: datetime
+    # 允许为空：历史数据/裸 SQL 导入可能没有 created_at，
+    # 这里报错会让整个列表接口 500，比缺个时间戳严重得多
+    created_at: Optional[datetime] = None
     analysis: Optional[str] = None
     score: Optional[float] = None  # 由调用方在返回时补充（如 get_exam 会补充）
     paper_id: Optional[int] = None      # 出自哪份卷宗
