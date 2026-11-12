@@ -10,7 +10,7 @@
     <!-- 学习模式选择 -->
     <el-card v-if="!studying && !practicing" class="mode-card">
       <template #header>
-        <span>题目选择</span>
+        <span>题目筛选与练习</span>
       </template>
 
       <div class="filter-row">
@@ -42,39 +42,46 @@
           </template>
         </el-input>
 
-        <el-button type="primary" @click="handleSearch">
+        <el-button @click="handleSearch">
           <el-icon><Search /></el-icon>
           查询
         </el-button>
 
-        <el-button
-          type="primary"
-          :loading="practiceLoading"
-          @click="startQuickRandom"
-        >
-          <el-icon><Refresh /></el-icon>
-          随机学习
-        </el-button>
+        <span class="filter-sep" aria-hidden="true"></span>
+
+        <el-tooltip content="按当前筛选条件随机抽题，直接开始做题" placement="top">
+          <el-button
+            type="primary"
+            :loading="practiceLoading"
+            @click="startQuickRandom"
+          >
+            <el-icon><Refresh /></el-icon>
+            随机学习
+          </el-button>
+        </el-tooltip>
       </div>
 
-      <!-- 自主练习（做题模式）：随机学习 / 按题型 / 按题号范围 / 按题目编号 -->
+      <!-- 自主练习（做题模式）：随机抽题 / 按题型 / 按题号范围 / 按题目编号 -->
       <div class="practice-panel">
         <div class="practice-panel-head">
           <span class="practice-panel-title">自主练习</span>
           <span class="range-hint">做题 → 提交判分 → 答错的题自动进入「我的错题本」</span>
         </div>
 
-        <el-radio-group v-model="practiceMode" class="practice-mode-group">
-          <el-radio-button value="random">随机学习</el-radio-button>
-          <el-radio-button value="type">按题型</el-radio-button>
-          <el-radio-button value="range">按题号范围</el-radio-button>
-          <el-radio-button value="number">按题目编号</el-radio-button>
-        </el-radio-group>
+        <div class="practice-mode-row">
+          <span class="mode-label">做题方式</span>
+          <el-radio-group v-model="practiceMode" class="practice-mode-group">
+            <el-radio-button value="random">随机抽题</el-radio-button>
+            <el-radio-button value="type">按题型</el-radio-button>
+            <el-radio-button value="range">按题号范围</el-radio-button>
+            <el-radio-button value="number">按题目编号</el-radio-button>
+          </el-radio-group>
+        </div>
 
         <div class="practice-params">
           <template v-if="practiceMode === 'random'">
             <span class="range-text">随机抽</span>
-            <el-input v-model="practiceCount" type="number" min="1" max="200" style="width: 90px" />
+            <el-input v-model="practiceCount" class="param-number" type="number" min="1" max="200" style="width: 90px" />
             <span class="range-text">道题</span>
           </template>
 
@@ -86,7 +93,7 @@
               <el-option label="填空题" value="fill" />
             </el-select>
             <span class="range-text">抽</span>
-            <el-input v-model="practiceCount" type="number" min="0" max="200" style="width: 90px" />
+            <el-input v-model="practiceCount" class="param-number" type="number" min="0" max="200" style="width: 90px" />
             <span class="range-text">道题（填 0 表示该题型全要）</span>
           </template>
 
@@ -108,7 +115,7 @@
             :loading="practiceLoading"
             @click="startPractice()"
           >
-            {{ practiceMode === 'random' ? '随机学习' : '开始练习' }}
+            开始练习
           </el-button>
         </div>
       </div>
@@ -192,7 +199,7 @@
           :loading="questionLoading"
           @click="startStudy"
         >
-          开始学习 ({{ selectedQuestions.length }})
+          查看勾选题 ({{ selectedQuestions.length }})
         </el-button>
       </div>
     </el-card>
@@ -1149,7 +1156,7 @@ const router = useRouter()
 const practicing = ref(false)
 const practiceLoading = ref(false)
 const practiceSubmitting = ref(false)
-// 选题方式：random 随机学习 / type 按题型 / range 按题号范围 / number 按题目编号
+// 选题方式：random 随机抽题 / type 按题型 / range 按题号范围 / number 按题目编号
 const practiceMode = ref('random')
 const practiceType = ref('')
 const practiceCount = ref(10)
@@ -1317,7 +1324,7 @@ const startPractice = async (mode) => {
   }
 }
 
-// 页头的「随机学习」：一键随机抽题
+// 筛选行里的「随机学习」：按当前筛选条件一键随机抽题
 const startQuickRandom = () => startPractice('random')
 
 // 提交本题：后端判分，答错的自动进错题本
@@ -1441,6 +1448,15 @@ onUnmounted(() => {
   gap: 10px;
   margin-bottom: 15px;
   flex-wrap: wrap;
+}
+
+/* 筛选行分组竖线：左边找题，右边直接开练 */
+.filter-sep {
+  width: 1px;
+  height: 24px;
+  align-self: center;
+  background: #dcdfe6;
+  margin: 0 4px;
 }
 
 .stats-row {
@@ -1960,7 +1976,13 @@ onUnmounted(() => {
   display: flex;
   align-items: baseline;
   gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+/* 说明文字靠右，和标题拉开距离，别挤在一起 */
+.practice-panel-head .range-hint {
+  margin-left: auto;
 }
 
 .practice-panel-title {
@@ -1969,8 +1991,22 @@ onUnmounted(() => {
   font-size: 15px;
 }
 
-.practice-mode-group {
+.practice-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.mode-label {
+  font-size: 13px;
+  color: #909399;
+  white-space: nowrap;
+}
+
+.practice-mode-group {
+  margin-bottom: 0;
 }
 
 .practice-params {
@@ -2053,6 +2089,9 @@ onUnmounted(() => {
   .filter-row .el-select,
   .filter-row .el-input { width: 100% !important; }
   .filter-row .el-button { width: 100%; margin-left: 0; }
+  .filter-sep { display: none; }
+  .practice-mode-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .practice-panel-head .range-hint { margin-left: 0; }
 
   .practice-panel { padding: 12px; }
   .practice-panel-head {
@@ -2077,13 +2116,17 @@ onUnmounted(() => {
     width: 100%;
   }
 
+  /* 参数行保持一行（随机抽 10 道题），太长了自己折行，
+     不要竖着摆成一列，"随机抽"和"道题"被输入框隔开很难读 */
   .practice-params {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
   }
-  .practice-params .el-select,
-  .practice-params .el-input { width: 100% !important; }
+  .practice-params .el-select { width: 100% !important; }
+  .practice-params .el-input:not(.param-number) { width: 100% !important; }
+  .practice-params .param-number { width: 90px !important; flex: none; }
   .practice-params .el-button { width: 100%; margin-left: 0; }
   .practice-params .range-text,
   .practice-params .range-hint { text-align: left; }
