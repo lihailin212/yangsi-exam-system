@@ -5,15 +5,6 @@
         <h2>考生自学</h2>
         <p class="subtitle">随机练习或按题型/题号选题，做完自动判分，答错的题进入「我的错题本」</p>
       </div>
-      <el-button
-        type="primary"
-        size="large"
-        :loading="practiceLoading"
-        @click="startQuickRandom"
-      >
-        <el-icon><Refresh /></el-icon>
-        随机学习
-      </el-button>
     </div>
 
     <!-- 学习模式选择 -->
@@ -54,6 +45,15 @@
         <el-button type="primary" @click="handleSearch">
           <el-icon><Search /></el-icon>
           查询
+        </el-button>
+
+        <el-button
+          type="primary"
+          :loading="practiceLoading"
+          @click="startQuickRandom"
+        >
+          <el-icon><Refresh /></el-icon>
+          随机学习
         </el-button>
       </div>
 
@@ -2041,7 +2041,6 @@ onUnmounted(() => {
     gap: 10px;
     margin-bottom: 14px;
   }
-  .page-header .el-button { width: 100%; margin-left: 0; }
 
   .subtitle { font-size: 13px; }
 
