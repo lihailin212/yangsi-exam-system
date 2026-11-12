@@ -107,8 +107,8 @@
           </el-col>
         </el-row>
         <el-form-item label="及格分数">
-          <el-input-number v-model="form.pass_score" :min="0" :max="100" />
-          <span style="margin-left:8px;color:#909399;font-size:13px">（百分制）</span>
+          <el-input-number v-model="form.pass_score" :min="0" :max="passScoreMax" />
+          <span style="margin-left:8px;color:#909399;font-size:13px">（百分制，上限跟着卷面总分走）</span>
         </el-form-item>
 
         <el-form-item label="补考次数">
@@ -136,6 +136,22 @@
             </div>
           </div>
           <div style="margin-top:8px;color:#909399;font-size:13px">设置每类题型的分值，用于计算考试总分</div>
+        </el-form-item>
+
+        <!-- 卷面总分预览。随机卷没有「选择题目」那块，管理员看不到总分是
+             「题型分值 × 题数」算出来的，很容易把 100 道单选题按每题 10 分存成
+             「满分 1000 分、及格 60 分」，蒙对 6 题就算过。这里实时算一遍。 -->
+        <el-form-item label="卷面总分">
+          <div>
+            <span style="font-size:14px">
+              预计总分 <b>{{ previewTotal }}</b> 分
+              <span style="margin-left:6px;color:#909399;font-size:13px">{{ previewDetail }}</span>
+            </span>
+            <div v-if="passRatioWarn" style="margin-top:6px;color:#E6A23C;font-size:13px">
+              ⚠ 及格线 {{ form.pass_score }} 分只占总分的 {{ passPercent }}%，答对几题就能及格，
+              多半是「题型分值」设错了
+            </div>
+          </div>
         </el-form-item>
 
         <el-form-item label="卷面方式">
@@ -209,7 +225,7 @@
               </el-table-column>
             </el-table>
             <div style="margin-top:8px;color:#409EFF;font-size:13px">
-              已选 {{ form.question_ids.length }} 道题，总分 {{ totalScore }} 分
+              已选 {{ form.question_ids.length }} 道题
             </div>
           </div>
         </el-form-item>
@@ -481,6 +497,50 @@ const selectedQuestionTypes = computed(() =>
 const totalScore = computed(() =>
   selectedQuestionTypes.value.reduce((sum, type) => sum + scoreOf(type), 0)
 )
+
+// 卷面总分预览。固定卷面按已选题目的分值合计；随机卷按抽题规则
+// 「题型分值 × 数量」合计——管理员在随机卷模式下看不到题目列表，
+// 总分是多少全靠这个提示，不然就会存成满分 1000 分、及格 60 分。
+const previewTotal = computed(() => {
+  if (!form.random_mode) return totalScore.value
+  return (form.random_rules || []).reduce((sum, rule) => {
+    const count = Number(rule.count) || 0
+    if (!count) return sum
+    // 规则没限定题型时，后端按候选题库里各题型的平均分估总分，
+    // 前端算不准就先不计入，免得给出和后台对不上的数字。
+    if (!rule.type) return sum
+    return sum + scoreOf(rule.type) * count
+  }, 0)
+})
+
+const previewCount = computed(() => {
+  if (!form.random_mode) return form.question_ids.length
+  return (form.random_rules || []).reduce((sum, r) => sum + (Number(r.count) || 0), 0)
+})
+
+const hasUntypedRule = computed(() =>
+  !!form.random_mode &&
+  (form.random_rules || []).some(r => (Number(r.count) || 0) > 0 && !r.type)
+)
+
+const previewDetail = computed(() =>
+  `${previewCount.value} 道题` +
+  (hasUntypedRule.value ? '（有规则没限定题型，总分按估算）' : '')
+)
+
+// 及格线占总分的比例。比例过低基本就是题型分值设错了：
+// 单选 10 分 × 100 题 = 满分 1000 分，及格 60 分就只考 6%。
+const passPercent = computed(() => {
+  if (!previewTotal.value) return 0
+  return Math.round((Number(form.pass_score) || 0) / previewTotal.value * 100)
+})
+
+const passRatioWarn = computed(() =>
+  previewTotal.value > 0 && passPercent.value > 0 && passPercent.value < 30
+)
+
+// 及格分上限：卷面总分超过 100 时，也得让管理员能填到总分
+const passScoreMax = computed(() => Math.max(100, previewTotal.value))
 
 const stripHtml = (html) => {
   const div = document.createElement('div')
