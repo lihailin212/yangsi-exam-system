@@ -88,6 +88,22 @@
         </div>
         
         <div class="header-right">
+          <!-- 手机版布局开关：手机上有些页面（宽表格、固定宽度的弹窗）显示不全，
+               打开这个开关把页面切成手机宽度的单列排版 -->
+          <el-tooltip
+            :content="mobileView ? '已切换到手机版布局，点此恢复电脑版' : '切换到手机版布局，手机上显示更友好'"
+            placement="bottom"
+          >
+            <button
+              class="mobile-view-toggle"
+              :class="{ active: mobileView }"
+              @click="toggleMobileView"
+            >
+              <el-icon><Iphone /></el-icon>
+              <span class="mobile-view-text">手机版</span>
+            </button>
+          </el-tooltip>
+
           <!-- Time Display -->
           <div class="time-display">
             <el-icon><Clock /></el-icon>
@@ -186,6 +202,7 @@ import { getRecentRecords } from '@/api/exams'
 import { getMySubscription } from '@/api/billing'
 import {
   HomeFilled,
+  Iphone,
   Reading,
   Edit,
   DataAnalysis,
@@ -240,6 +257,21 @@ const currentPageTitle = computed(() => {
 
 const isMobile = ref(false)
 const sidebarOpen = ref(false)
+
+// 手机版布局。开关状态记在 localStorage，刷新后还在。
+// 打开时给 body 加一个 class，全局样式（assets/styles.css）据此
+// 把内容收成单列、弹窗按屏宽收缩、表单标签竖排。
+const mobileView = ref(localStorage.getItem('mobileView') === '1')
+
+const applyMobileView = () => {
+  document.body.classList.toggle('mobile-view', mobileView.value)
+}
+
+const toggleMobileView = () => {
+  mobileView.value = !mobileView.value
+  localStorage.setItem('mobileView', mobileView.value ? '1' : '0')
+  applyMobileView()
+}
 const sidebarWidth = computed(() => {
   if (isMobile.value) return sidebarOpen.value ? '240px' : '0px'
   return '240px'
@@ -449,6 +481,8 @@ watch(() => authStore.token, (token) => {
 }, { immediate: false })
 
 onMounted(() => {
+  applyMobileView()
+
   checkMobile()
   updateTime()
   if (authStore.token) {
@@ -767,6 +801,32 @@ const handleCommand = (command) => {
   display: flex;
   align-items: center;
   gap: var(--space-4);
+}
+
+.mobile-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  background: var(--neutral-100);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--neutral-600);
+  transition: all var(--transition-fast);
+}
+
+.mobile-view-toggle:hover {
+  background: var(--neutral-200);
+  color: var(--neutral-800);
+}
+
+.mobile-view-toggle.active {
+  background: var(--primary-500);
+  border-color: var(--primary-500);
+  color: #fff;
 }
 
 .time-display {

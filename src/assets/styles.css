@@ -279,3 +279,164 @@ body {
   opacity: 0;
   transform: translateX(-20px);
 }
+
+
+/* ===== 手机版布局 =====
+   顶栏右侧「手机版」按钮打开这个模式（body.mobile-view）。
+   目的：手机上有些页面显示不全——表格太宽、弹窗宽度是写死的 px、
+   表单标签和输入框挤在一行。把页面按手机宽度重新排一遍：
+
+   - 内容区收成一条手机宽度的单列，超宽屏上居中，看起来就是手机的样子
+   - 弹窗/消息框按屏宽收缩，表单标签竖排、输入框占满宽度
+   - 表格字号缩小、单元格允许换行
+
+   关掉按钮就全部还原，不影响其它页面。 */
+body.mobile-view .main-content {
+  /* width + min-width 都要给：el-main 是 flex 子项，不写 min-width:0
+     会被内容（表格）撑开，连整个页面都被撑宽，手机上就横向滚动了 */
+  width: 100%;
+  min-width: 0;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 12px;
+  background: var(--neutral-100);
+}
+
+body.mobile-view .main-content > * {
+  max-width: 100%;
+}
+
+/* 弹窗：Element Plus 弹窗宽度写死 px，手机上会超出屏幕 */
+body.mobile-view .el-dialog {
+  width: 92% !important;
+  max-width: 92vw;
+  margin-top: 8vh !important;
+}
+
+body.mobile-view .el-dialog__body {
+  padding: 14px 16px;
+  max-height: 68vh;
+  overflow-y: auto;
+}
+
+body.mobile-view .el-dialog__footer {
+  padding: 10px 16px 14px;
+}
+
+body.mobile-view .el-message-box {
+  width: 90% !important;
+  max-width: 90vw;
+}
+
+body.mobile-view .el-drawer__body {
+  padding: 12px;
+}
+
+/* 表单：标签竖排，输入框占满宽度（原来 label 固定宽度，把输入框挤没了） */
+body.mobile-view .el-form-item {
+  display: block;
+  margin-bottom: 14px;
+}
+
+body.mobile-view .el-form-item__label {
+  display: block;
+  width: auto !important;
+  height: auto;
+  padding: 0 0 4px 0;
+  line-height: 1.4;
+  text-align: left;
+}
+
+body.mobile-view .el-form-item__content {
+  margin-left: 0 !important;
+}
+
+body.mobile-view .el-input,
+body.mobile-view .el-select,
+body.mobile-view .el-textarea,
+body.mobile-view .el-input-number {
+  width: 100% !important;
+}
+
+/* 页面标题栏、筛选行：竖排。标题栏原来是横排（标题在左、按钮在右），
+   收窄以后标题会被挤成一列竖着的字 */
+body.mobile-view .page-header {
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 10px;
+}
+
+body.mobile-view .page-header h2,
+body.mobile-view .page-header .subtitle {
+  white-space: normal;
+  word-break: keep-all;
+}
+
+/* 页面标题栏里的按钮组（批量导入/分类管理…）也要能折行，
+   四个按钮一行在手机上放不下 */
+body.mobile-view .page-header > div {
+  flex-wrap: wrap;
+}
+
+body.mobile-view .filter-row {
+  flex-wrap: wrap;
+}
+
+body.mobile-view .filter-row > * {
+  flex: 1 1 100%;
+}
+
+/* 行内表单（筛选区）改成竖排，别挤在一行 */
+body.mobile-view .el-form--inline {
+  display: block;
+}
+
+body.mobile-view .el-form--inline .el-form-item {
+  margin-right: 0;
+  margin-bottom: 10px;
+}
+
+/* 表格：字号缩小、单元格允许换行，表头和内容横向滚动 */
+body.mobile-view .el-table {
+  font-size: 12px;
+}
+
+body.mobile-view .el-table .cell {
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+body.mobile-view .el-table__body-wrapper,
+body.mobile-view .el-table__header-wrapper {
+  overflow-x: auto;
+}
+
+/* 按钮、分页、标签页：手机上手指点得中 */
+body.mobile-view .el-button {
+  padding: 8px 12px;
+}
+
+body.mobile-view .el-pagination {
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+body.mobile-view .el-tabs__item {
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+/* 顶栏开关本身：手机上只留图标，省地方 */
+@media (max-width: 768px) {
+  /* 手机上顶栏放不下文字，只留图标（悬停/长按有提示） */
+  .mobile-view-text {
+    display: none;
+  }
+
+  .mobile-view-toggle {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+}

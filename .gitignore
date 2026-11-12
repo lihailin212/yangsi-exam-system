@@ -108,3 +108,6 @@ iqc_login_state.json
 
 # 误生成的空文件（内容是一句乱码报错）
 /!
+
+# 题库体检脚本每次生成的明细，不进版本库
+backend/scripts/audit_report.txt
