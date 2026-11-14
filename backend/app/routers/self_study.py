@@ -252,6 +252,7 @@ def submit_one_answer(payload: AnswerIn,
         "correct": correct,
         "correct_answer": answer_text(question),
         "analysis": question.analysis or "",
+        "mnemonic": question.mnemonic or "",
         "correct_keys": correct_keys(question),
         "in_wrong_book": not correct,
     }

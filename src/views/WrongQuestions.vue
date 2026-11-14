@@ -87,6 +87,10 @@
               <span class="detail-label">解析：</span>
               <span>{{ row.analysis }}</span>
             </div>
+            <div v-if="row.mnemonic" class="detail-line mnemonic-line">
+              <span class="detail-label">巧记：</span>
+              <span>{{ row.mnemonic }}</span>
+            </div>
           </div>
         </div>
         <el-empty v-if="!loading && items.length === 0" description="还没有错题记录" />
@@ -108,6 +112,10 @@
               <div v-if="row.analysis" class="detail-line">
                 <span class="detail-label">解析：</span>
                 <span>{{ row.analysis }}</span>
+              </div>
+              <div v-if="row.mnemonic" class="detail-line mnemonic-line">
+                <span class="detail-label">巧记：</span>
+                <span>{{ row.mnemonic }}</span>
               </div>
             </div>
           </template>

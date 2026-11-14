@@ -199,6 +199,15 @@
         <el-form-item label="解析">
           <el-input v-model="form.analysis" type="textarea" :rows="2" placeholder="答案解析（可选）" />
         </el-form-item>
+
+        <el-form-item label="巧记">
+          <el-input
+            v-model="form.mnemonic"
+            type="textarea"
+            :rows="2"
+            placeholder="一句话记忆口诀、易错提醒（可选；留空则考生自学时看不到这一栏）"
+          />
+        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -388,6 +397,7 @@ const form = reactive({
   options: defaultOptions(),
   answer: '',
   analysis: '',
+  mnemonic: '',
   category: '',
 })
 
@@ -696,6 +706,7 @@ const openEdit = async (row) => {
   }
   form.answer = row.answer
   form.analysis = row.analysis || ''
+  form.mnemonic = row.mnemonic || ''
   form.category = row.category || ''
   multipleAnswer.value = row.type === 'multiple' ? row.answer.split(',') : []
   if (row.type === 'fill') {
@@ -792,6 +803,7 @@ const handleSave = async () => {
       options: optionsStr,
       answer: form.answer,
       analysis: form.analysis || '',
+      mnemonic: form.mnemonic || '',
       category: form.category || '',
     }
     console.log('payload:', payload)

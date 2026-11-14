@@ -102,6 +102,7 @@ class Question(Base):
     options = Column(Text)      # JSON: {"A":"...","B":"..."}
     answer = Column(String)     # 单选/判断: "A" / "正确"; 多选: "A,B"
     analysis = Column(Text, default="")
+    mnemonic = Column(Text, default="")   # 巧记：一句话记忆口诀/易错提醒
     category = Column(String, default="")
     # 出自哪份卷宗（历年真题卷 / 专业知识清单）。null = 普通题库题
     paper_id = Column(Integer, ForeignKey("question_papers.id"), nullable=True)   # 索引同上

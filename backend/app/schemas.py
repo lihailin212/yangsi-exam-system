@@ -284,6 +284,7 @@ class QuestionCreate(BaseModel):
     options: str = "{}"
     answer: str
     analysis: Optional[str] = ""
+    mnemonic: Optional[str] = ""      # 巧记
     category: Optional[str] = ""
 
 class QuestionUpdate(QuestionCreate):

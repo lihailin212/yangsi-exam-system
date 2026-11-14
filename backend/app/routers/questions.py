@@ -98,6 +98,7 @@ def study_questions(
             "type": q.type,
             "content": q.content,
             "options": q.options,
+            "mnemonic": q.mnemonic or "",
             "category": q.category,
         })
     return {"items": result, "total": total}
@@ -137,6 +138,7 @@ def study_question_detail(
         "options": q.options,
         "answer": q.answer,
         "analysis": q.analysis,
+        "mnemonic": q.mnemonic or "",
         "category": q.category,
     }
     # 该题若正在某场考试中使用，不对考生公开答案，防止通过自学功能查答案
@@ -201,6 +203,7 @@ def study_questions_batch(
             "options": q.options,
             "answer": "" if q.id in hidden else q.answer,
             "analysis": "" if q.id in hidden else q.analysis,
+            "mnemonic": "" if q.id in hidden else (q.mnemonic or ""),
             "category": q.category,
         })
     return result

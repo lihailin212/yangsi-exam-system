@@ -226,6 +226,7 @@ with engine.connect() as conn:
 # 新列必须先补上：_backfill_total_score() 会 SELECT exams 全表，
 # 模型里声明了新列而旧表还没有时，直接报 "no such column"。
 _add_column("ALTER TABLE questions ADD COLUMN paper_id INTEGER REFERENCES question_papers(id)")
+_add_column("ALTER TABLE questions ADD COLUMN mnemonic TEXT DEFAULT ''")
 _add_column("ALTER TABLE exams ADD COLUMN kind VARCHAR(20) DEFAULT 'normal'")
 _add_column("ALTER TABLE exams ADD COLUMN paper_id INTEGER REFERENCES question_papers(id)")
 

@@ -10,8 +10,16 @@
     <!-- 学习模式选择 -->
     <el-card v-if="!studying && !practicing" class="mode-card">
       <template #header>
-        <span>题目筛选与练习</span>
+        <span>考生自学</span>
       </template>
+
+      <!-- ① 找题：这里的筛选条件同时管着下面 ② 自主练习 和 ③ 浏览题目 -->
+      <section class="zone zone-find">
+        <div class="zone-head">
+          <span class="zone-no">①</span>
+          <span class="zone-title">找题</span>
+          <span class="zone-hint">按类型、分类或关键词缩小范围；② 自主练习 和 ③ 浏览题目 都按这个条件来</span>
+        </div>
 
       <div class="filter-row">
         <el-select v-model="filterType" placeholder="题目类型" clearable style="width: 150px">
@@ -60,12 +68,14 @@
           </el-button>
         </el-tooltip>
       </div>
+      </section>
 
-      <!-- 自主练习（做题模式）：随机抽题 / 按题型 / 按题号范围 / 按题目编号 -->
-      <div class="practice-panel">
-        <div class="practice-panel-head">
-          <span class="practice-panel-title">自主练习</span>
-          <span class="range-hint">做题 → 提交判分 → 答错的题自动进入「我的错题本」</span>
+      <!-- ② 自主练习：做题 → 提交判分 → 答错的题自动进错题本 -->
+      <section class="zone zone-practice">
+        <div class="zone-head">
+          <span class="zone-no">②</span>
+          <span class="zone-title">自主练习</span>
+          <span class="zone-hint">做题 → 提交判分 → 答错的题自动进入「我的错题本」</span>
         </div>
 
         <div class="practice-mode-row">
@@ -118,35 +128,64 @@
             开始练习
           </el-button>
         </div>
-      </div>
+      </section>
 
-      <el-divider content-position="left">浏览题目（点题干下方区域看答案和解析）</el-divider>
+      <!-- ③ 浏览题目：点题干下方区域看答案、解析、巧记 -->
+      <section class="zone zone-browse">
+        <div class="zone-head">
+          <span class="zone-no">③</span>
+          <span class="zone-title">浏览题目</span>
+          <span class="zone-hint">点题干下方区域看答案、解析和巧记；勾选后可整批学习</span>
+        </div>
 
       <!-- 按题号范围选题 -->
       <div class="range-row">
         <span class="range-label">按题号选题：</span>
-        <span class="range-text">第</span>
-        <el-input
-          v-model="rangeFrom"
-          type="number"
-          min="1"
-          :max="total || 1"
-          style="width: 96px"
-          placeholder="起始题号"
-        />
-        <span class="range-text">题 到 第</span>
-        <el-input
-          v-model="rangeTo"
-          type="number"
-          min="1"
-          :max="total || 1"
-          style="width: 96px"
-          placeholder="结束题号"
-        />
-        <span class="range-text">题</span>
+        <!-- 两组「第 X 题」各自成块：手机版窄屏换行时不会把「第」「题」拆到别的行 -->
+        <span class="range-pair">
+          <span class="range-text">第</span>
+          <el-input
+            v-model="rangeFrom"
+            type="number"
+            min="1"
+            :max="total || 1"
+            style="width: 96px"
+            placeholder="起始题号"
+          />
+          <span class="range-text">题</span>
+        </span>
+        <span class="range-pair">
+          <span class="range-text">到第</span>
+          <el-input
+            v-model="rangeTo"
+            type="number"
+            min="1"
+            :max="total || 1"
+            style="width: 96px"
+            placeholder="结束题号"
+          />
+          <span class="range-text">题</span>
+        </span>
         <el-button size="small" @click="selectRange">选这批</el-button>
-        <el-button size="small" @click="selectAll">全选（{{ allIds.length }}）</el-button>
         <span class="range-hint">当前筛选共 {{ total }} 道题，题号即下方列表顺序</span>
+      </div>
+
+      <!-- 勾选类操作全收在这一块：按范围选、全选、反选、清空、开始学习 -->
+      <div class="batch-row">
+        <span class="batch-label">勾选题目：</span>
+        <el-button size="small" @click="selectAll">全选（{{ allIds.length }}）</el-button>
+        <el-button size="small" @click="selectReverse">反选</el-button>
+        <el-button size="small" @click="clearSelection">清空</el-button>
+        <span class="range-hint" v-if="selectedQuestions.length > 0">已选择 {{ selectedQuestions.length }} 道</span>
+        <el-button
+          type="primary"
+          size="small"
+          :disabled="selectedQuestions.length === 0"
+          :loading="questionLoading"
+          @click="startStudy"
+        >
+          查看勾选题 ({{ selectedQuestions.length }})
+        </el-button>
       </div>
 
       <div class="stats-row">
@@ -189,19 +228,7 @@
         @current-change="loadQuestions"
       />
 
-      <div class="action-row">
-        <el-button @click="selectAll">全选</el-button>
-        <el-button @click="selectReverse">反选</el-button>
-        <el-button @click="clearSelection">清空</el-button>
-        <el-button
-          type="primary"
-          :disabled="selectedQuestions.length === 0"
-          :loading="questionLoading"
-          @click="startStudy"
-        >
-          查看勾选题 ({{ selectedQuestions.length }})
-        </el-button>
-      </div>
+      </section>
     </el-card>
 
     <!-- 自主练习（做题模式） -->
@@ -276,6 +303,11 @@
               我的答案：{{ practiceMyAnswerText || '（未作答）' }}
             </div>
             <div v-if="!currentPracticeResult.correct" class="answer-label">本题已加入「我的错题本」</div>
+          </div>
+
+          <div v-if="currentPracticeResult.mnemonic" class="mnemonic-box">
+            <div class="mnemonic-label">巧记</div>
+            <div class="mnemonic-value" v-html="currentPracticeResult.mnemonic"></div>
           </div>
 
           <div v-if="currentPracticeResult.analysis" class="analysis-box">
@@ -410,6 +442,11 @@
             <div class="answer-box">
               <div class="answer-label">正确答案</div>
               <div class="answer-value" v-html="formatAnswer(currentQuestion)"></div>
+            </div>
+
+            <div v-if="currentQuestion.mnemonic" class="mnemonic-box">
+              <div class="mnemonic-label">巧记</div>
+              <div class="mnemonic-value" v-html="currentQuestion.mnemonic"></div>
             </div>
 
             <div v-if="currentQuestion.analysis" class="analysis-box">
@@ -1450,6 +1487,107 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
+/* ===== 功能分区 =====
+   这一页有三件不同的事：找题、做题、浏览。
+   原来全塞在一张卡片里，操作人员分不清哪个按钮管哪块，
+   现在拆成 ①②③ 三个区：一区一件事，标题带上说明。 */
+.zone {
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  background: #fff;
+}
+
+.zone-find {
+  background: #fbfcfd;
+}
+
+.zone-practice {
+  background: #f7f9fc;
+  border-color: #e4e7ed;
+}
+
+.zone-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed #e4e7ed;
+}
+
+.zone-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary-500);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  flex: none;
+}
+
+.zone-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.zone-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
+}
+
+/* 勾选类操作收在一行：按范围选、全选、反选、清空、开始学习 */
+.batch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+  padding-top: 10px;
+  border-top: 1px dashed #e4e7ed;
+}
+
+.batch-label {
+  font-size: 13px;
+  color: #606266;
+}
+
+/* 巧记：比解析更醒目一点，用暖色，和解析区分开 */
+.mnemonic-box {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #fff8e6;
+  border-left: 3px solid #e6a23c;
+  border-radius: 4px;
+}
+
+.mnemonic-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b88230;
+  margin-bottom: 4px;
+}
+
+.mnemonic-value {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #5b4a26;
+}
+
+.mnemonic-line .detail-label,
+.mnemonic-line .answer-label {
+  color: #b88230;
+  font-weight: 600;
+}
+
 /* 筛选行分组竖线：左边找题，右边直接开练 */
 .filter-sep {
   width: 1px;
@@ -1544,6 +1682,14 @@ onUnmounted(() => {
 }
 
 .range-text {
+  white-space: nowrap;
+}
+
+/* 「第 X 题」「到第 Y 题」各占一整块，窄屏换行时不会被拆散 */
+.range-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
 }
 
@@ -2091,6 +2237,10 @@ onUnmounted(() => {
   .filter-row .el-button { width: 100%; margin-left: 0; }
   .filter-sep { display: none; }
   .practice-mode-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+
+  .zone { padding: 12px; }
+  .zone-hint { margin-left: 0; width: 100%; }
+  .batch-row { gap: 6px; }
   .practice-panel-head .range-hint { margin-left: 0; }
 
   .practice-panel { padding: 12px; }

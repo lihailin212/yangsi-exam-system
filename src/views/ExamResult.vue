@@ -69,6 +69,9 @@
           <div class="review-analysis" v-if="q.analysis">
             <span class="answer-label">解析：</span>{{ q.analysis }}
           </div>
+          <div class="review-analysis mnemonic-line" v-if="q.mnemonic">
+            <span class="answer-label">巧记：</span>{{ q.mnemonic }}
+          </div>
         </div>
       </div>
     </el-dialog>
